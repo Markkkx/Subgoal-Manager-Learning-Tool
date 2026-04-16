@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Research Search Demo</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <main class="page">
+      <section id="auth-shell" class="auth-shell">
+        <div class="auth-card">
+          <p class="eyebrow">Research Access</p>
+          <h1 class="auth-title">Sign in to enter the study</h1>
+          <p class="auth-copy">
+            Use email and password authentication to access the existing research page.
+          </p>
+
+          <div class="auth-tabs" role="tablist" aria-label="Authentication tabs">
+            <button id="login-tab" class="auth-tab active" type="button">Log In</button>
+            <button id="signup-tab" class="auth-tab" type="button">Sign Up</button>
+          </div>
+
+          <form id="auth-form" class="auth-form">
+            <label class="auth-label" for="auth-email">Email</label>
+            <input id="auth-email" name="email" type="email" autocomplete="email" required />
+
+            <label class="auth-label" for="auth-password">Password</label>
+            <input
+              id="auth-password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+            />
+
+            <p id="auth-helper" class="auth-helper">
+              Use an existing account to continue to the research page.
+            </p>
+            <p id="auth-error" class="auth-error" aria-live="polite"></p>
+
+            <button id="auth-submit" class="auth-submit" type="submit">Log In</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="app-shell" class="app-shell hidden">
+        <div class="app-topbar">
+          <div class="session-pill">
+            <span class="meta-label">Signed in as</span>
+            <span id="auth-user-display"></span>
+          </div>
+          <button id="logout-button" class="logout-button" type="button">Log Out</button>
+        </div>
+
+        <div class="layout-grid">
+          <section class="search-shell">
+            <p class="eyebrow">Learning Site Prototype</p>
+            <h1>Browser Search Demo</h1>
+            <p class="intro">
+              This page mimics a familiar web search workflow while logging behavior
+              for research.
+            </p>
+
+            <form id="search-form" class="search-form">
+              <label class="sr-only" for="query-input">Search query</label>
+              <input
+                id="query-input"
+                name="query"
+                type="text"
+                placeholder="Search the web..."
+                autocomplete="off"
+                required
+              />
+              <button type="submit">Search</button>
+            </form>
+
+            <div class="meta-row">
+              <div>
+                <span class="meta-label">User ID</span>
+                <span id="user-id-display"></span>
+              </div>
+              <div>
+                <span class="meta-label">Session ID</span>
+                <span id="session-id-display"></span>
+              </div>
+            </div>
+
+            <p id="status-message" class="status-message"></p>
+
+            <section class="summary-panel">
+              <div class="panel-header">
+                <h2>Search Summary</h2>
+                <span class="panel-tag">Groq</span>
+              </div>
+              <p id="summary-text" class="summary-text">
+                Search for a topic to generate a short summary from the returned results.
+              </p>
+            </section>
+
+            <section id="results" class="results" aria-live="polite"></section>
+          </section>
+
+          <aside class="chat-shell">
+            <div class="panel-header">
+              <h2>Study Chatbot</h2>
+              <span class="panel-tag">Groq</span>
+            </div>
+            <p class="chat-intro">
+              Ask follow-up questions about your current search topic or general study questions.
+            </p>
+
+            <section class="keyword-panel">
+              <div class="keyword-header">
+                <h3>Search Keywords</h3>
+                <span class="keyword-caption">from search bar</span>
+              </div>
+              <div id="keyword-list" class="keyword-list">
+                <span class="keyword-empty">Search for something to extract keywords.</span>
+              </div>
+            </section>
+
+            <section id="chat-messages" class="chat-messages" aria-live="polite"></section>
+
+            <form id="chat-form" class="chat-form">
+              <label class="sr-only" for="chat-input">Chat message</label>
+              <textarea
+                id="chat-input"
+                name="message"
+                rows="3"
+                placeholder="Ask the chatbot something..."
+                required
+              ></textarea>
+              <button type="submit">Send</button>
+            </form>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      window.FIREBASE_CONFIG = {{ firebase_config | tojson }};
+    </script>
+    <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

@@ -3,6 +3,8 @@
 Minimal local demo web app for a research prototype that:
 
 - gates access with Firebase Authentication
+- includes a Firestore-backed Week 0 onboarding flow
+- includes a Firestore-backed study dashboard and week-entry flow
 - shows a familiar browser-style search experience inside a learning site
 - uses SerpAPI for web search results
 - uses Groq for chatbot responses and query summaries
@@ -26,6 +28,9 @@ Minimal local demo web app for a research prototype that:
 │   │   ├── app.js
 │   │   ├── firebase-auth.js
 │   │   ├── firebase-config.js
+│   │   ├── firebase-firestore.js
+│   │   ├── delayed-test-questions.js
+│   │   ├── onboarding-quiz.js
 │   │   └── style.css
 │   └── templates
 │       └── index.html
@@ -52,6 +57,49 @@ Minimal local demo web app for a research prototype that:
 - Firebase Authentication handles email/password sign-up and login
 - authenticated users are shown the existing research interface
 - logging out returns the user to the auth page
+
+## Week 0 onboarding flow
+
+After authentication, users go through a Firestore-backed Week 0 module unless onboarding is already complete.
+
+Steps:
+
+1. Welcome
+2. Consent placeholder
+3. Demographics
+4. Baseline quiz framework
+5. Initial sub-goals
+6. Completion
+
+The app stores:
+
+- `users/{uid}` for onboarding status and demographics
+- `users/{uid}/week0/subgoals` for the three initial sub-goals
+
+If a user leaves before finishing, the onboarding step and saved answers are loaded again on the next login.
+
+## Dashboard and week-entry flow
+
+After Week 0 is completed, users land on a dashboard instead of going straight to the main research page.
+
+The dashboard:
+
+- shows the signed-in user
+- shows `assignedCondition` from Firestore or a placeholder if missing
+- shows current week and completed-week count
+- shows Week 1 to Week 4 cards with `Start`, `Continue`, or `Completed` states
+
+The week flow works like this:
+
+- Week 1 goes directly to weekly sub-goal planning
+- Weeks 2 to 4 begin with a placeholder delayed test
+- after delayed test, users define 3 weekly sub-goals
+- after sub-goal submission, users are redirected to the existing main research page
+
+Week progress is stored under:
+
+- `users/{uid}` for `assignedCondition`, `currentWeek`, and `weekProgress`
+- `users/{uid}/weeks/{weekId}` for delayed-test state, sub-goals, and timestamps
 
 ## Behavior logging
 
@@ -116,7 +164,8 @@ http://127.0.0.1:5000
 1. Create a Firebase project.
 2. In Firebase Authentication, enable the Email/Password sign-in method.
 3. In Project Settings, create a Web App and copy the Firebase config values.
-4. Paste those values into `.env`.
+4. Create a Cloud Firestore database for onboarding data.
+5. Paste your Firebase Web App config values into `.env`.
 
 The auth gate is implemented on the frontend so the existing research page can stay largely unchanged.
 

@@ -1,4 +1,8 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+import {
+  getApp,
+  getApps,
+  initializeApp,
+} from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
 import {
   createUserWithEmailAndPassword,
   getAuth,
@@ -12,7 +16,7 @@ import { firebaseConfig, hasFirebaseConfig } from "./firebase-config.js";
 let authInstance = null;
 
 if (hasFirebaseConfig()) {
-  const app = initializeApp(firebaseConfig);
+  const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
   authInstance = getAuth(app);
 }
 

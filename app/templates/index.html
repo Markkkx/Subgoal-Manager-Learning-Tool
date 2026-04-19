@@ -44,6 +44,91 @@
         </div>
       </section>
 
+      <section id="onboarding-shell" class="onboarding-shell hidden">
+        <div class="onboarding-card">
+          <div class="onboarding-header">
+            <div>
+              <p class="eyebrow">Week 0</p>
+              <h1 id="onboarding-title" class="onboarding-title"></h1>
+              <p id="onboarding-subtitle" class="onboarding-subtitle"></p>
+            </div>
+            <div class="onboarding-step-indicator">
+              <span id="onboarding-step-count"></span>
+            </div>
+          </div>
+
+          <div class="onboarding-progress">
+            <div id="onboarding-progress-bar" class="onboarding-progress-bar"></div>
+          </div>
+
+          <div id="onboarding-content" class="onboarding-content"></div>
+
+          <p id="onboarding-validation" class="validation-message"></p>
+
+          <div class="onboarding-actions">
+            <button id="onboarding-back" class="secondary-action" type="button">Back</button>
+            <button id="onboarding-next" class="primary-action" type="button">Next</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="dashboard-shell" class="dashboard-shell hidden">
+        <div class="dashboard-card">
+          <section class="dashboard-progress-panel">
+            <div class="dashboard-progress-copy">
+              <p id="dashboard-progress-label" class="dashboard-progress-label">0 of 4 weeks completed</p>
+              <p id="dashboard-progress-caption" class="dashboard-progress-caption">
+                Current week: Week 1
+              </p>
+            </div>
+            <div class="dashboard-progress-track" aria-hidden="true">
+              <div id="dashboard-progress-fill" class="dashboard-progress-fill"></div>
+            </div>
+          </section>
+
+          <div class="dashboard-header">
+            <div>
+              <p class="eyebrow">Study Dashboard</p>
+              <h1 class="dashboard-title">Welcome, <span id="dashboard-user-name"></span></h1>
+              <p class="dashboard-subtitle">
+                Review your study progress and enter the next available week.
+              </p>
+            </div>
+            <div class="dashboard-header-actions">
+              <button id="dashboard-logout-button" class="logout-button" type="button">Log Out</button>
+            </div>
+          </div>
+
+          <section class="dashboard-panel">
+            <div class="panel-header">
+              <h2>Weekly Entry</h2>
+              <span class="panel-tag">Weeks 1-4</span>
+            </div>
+            <div id="week-card-list" class="week-card-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="week-shell" class="week-shell hidden">
+        <div class="week-card">
+          <div class="week-header">
+            <div>
+              <p class="eyebrow" id="week-shell-eyebrow">Week Flow</p>
+              <h1 id="week-shell-title" class="onboarding-title"></h1>
+              <p id="week-shell-subtitle" class="onboarding-subtitle"></p>
+            </div>
+          </div>
+
+          <div id="week-shell-content" class="onboarding-content"></div>
+          <p id="week-shell-validation" class="validation-message"></p>
+
+          <div class="onboarding-actions">
+            <button id="week-shell-back" class="secondary-action" type="button">Back to Dashboard</button>
+            <button id="week-shell-next" class="primary-action" type="button">Next</button>
+          </div>
+        </div>
+      </section>
+
       <section id="app-shell" class="app-shell hidden">
         <div class="app-topbar">
           <div class="session-pill">

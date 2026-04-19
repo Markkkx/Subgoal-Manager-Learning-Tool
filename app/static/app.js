@@ -5,8 +5,42 @@ import {
   onAuthReady,
   signUpWithEmail,
 } from "./firebase-auth.js";
+import {
+  getUserOnboarding,
+  getUserWeekProgress,
+  saveUserOnboarding,
+  saveUserStudyProfile,
+  saveWeek0Subgoals,
+  saveUserWeek,
+} from "./firebase-firestore.js";
+import { baselineQuizQuestions } from "./onboarding-quiz.js";
+import { delayedTestQuestionsByWeek } from "./delayed-test-questions.js";
 
 const authShell = document.getElementById("auth-shell");
+const onboardingShell = document.getElementById("onboarding-shell");
+const onboardingTitle = document.getElementById("onboarding-title");
+const onboardingSubtitle = document.getElementById("onboarding-subtitle");
+const onboardingStepCount = document.getElementById("onboarding-step-count");
+const onboardingProgressBar = document.getElementById("onboarding-progress-bar");
+const onboardingContent = document.getElementById("onboarding-content");
+const onboardingValidation = document.getElementById("onboarding-validation");
+const onboardingBack = document.getElementById("onboarding-back");
+const onboardingNext = document.getElementById("onboarding-next");
+const dashboardShell = document.getElementById("dashboard-shell");
+const dashboardUserName = document.getElementById("dashboard-user-name");
+const dashboardProgressLabel = document.getElementById("dashboard-progress-label");
+const dashboardProgressCaption = document.getElementById("dashboard-progress-caption");
+const dashboardProgressFill = document.getElementById("dashboard-progress-fill");
+const weekCardList = document.getElementById("week-card-list");
+const dashboardLogoutButton = document.getElementById("dashboard-logout-button");
+const weekShell = document.getElementById("week-shell");
+const weekShellEyebrow = document.getElementById("week-shell-eyebrow");
+const weekShellTitle = document.getElementById("week-shell-title");
+const weekShellSubtitle = document.getElementById("week-shell-subtitle");
+const weekShellContent = document.getElementById("week-shell-content");
+const weekShellValidation = document.getElementById("week-shell-validation");
+const weekShellBack = document.getElementById("week-shell-back");
+const weekShellNext = document.getElementById("week-shell-next");
 const appShell = document.getElementById("app-shell");
 const authUserDisplay = document.getElementById("auth-user-display");
 const loginTab = document.getElementById("login-tab");
@@ -38,6 +72,46 @@ let pendingReturnContext = null;
 let leftMainPageAt = null;
 let returnLogged = false;
 let authMode = "login";
+const weekDefinitions = [
+  { id: "week1", label: "Week 1" },
+  { id: "week2", label: "Week 2" },
+  { id: "week3", label: "Week 3" },
+  { id: "week4", label: "Week 4" },
+];
+const onboardingSteps = [
+  "welcome",
+  "consent",
+  "demographics",
+  "quiz",
+  "subgoals",
+  "complete",
+];
+const onboardingState = {
+  step: "welcome",
+  completed: false,
+  consentAgreed: false,
+  demographics: {
+    ageRange: "",
+    primaryLanguage: "",
+    educationLevel: "",
+    searchEngineFamiliarity: "4",
+    conversationalAiFamiliarity: "4",
+    technologyUsageFrequency: "",
+  },
+  quizAnswers: {},
+  subgoals: createDefaultSubgoals(),
+};
+const dashboardState = {
+  assignedCondition: "Condition not assigned yet",
+  currentWeek: "week1",
+  weeks: createDefaultWeeks(),
+};
+const weekFlowState = {
+  weekId: "",
+  step: "",
+  delayedTestAnswers: {},
+  subgoals: createDefaultWeekSubgoals(),
+};
 
 sessionIdDisplay.textContent = sessionId;
 initializeInterface();
@@ -187,13 +261,91 @@ logoutButton.addEventListener("click", async () => {
   await logoutUser();
 });
 
+dashboardLogoutButton.addEventListener("click", async () => {
+  await logoutUser();
+});
+
+onboardingBack.addEventListener("click", async () => {
+  const currentIndex = onboardingSteps.indexOf(onboardingState.step);
+  if (currentIndex <= 0) {
+    return;
+  }
+
+  setOnboardingStep(onboardingSteps[currentIndex - 1]);
+  await persistOnboardingProgress();
+});
+
+onboardingNext.addEventListener("click", async () => {
+  onboardingValidation.textContent = "";
+
+  const validationError = readAndValidateCurrentStep();
+  if (validationError) {
+    onboardingValidation.textContent = validationError;
+    return;
+  }
+
+  const currentIndex = onboardingSteps.indexOf(onboardingState.step);
+  const isLastStep = currentIndex === onboardingSteps.length - 1;
+  if (isLastStep) {
+    await loadDashboardState();
+    showDashboardView();
+    return;
+  }
+
+  if (onboardingState.step === "subgoals") {
+    onboardingState.completed = true;
+    onboardingState.step = "complete";
+    await persistOnboardingProgress();
+    renderOnboardingStep();
+    return;
+  }
+
+  setOnboardingStep(onboardingSteps[currentIndex + 1]);
+  await persistOnboardingProgress();
+});
+
+weekShellBack.addEventListener("click", async () => {
+  await loadDashboardState();
+  showDashboardView();
+});
+
+weekShellNext.addEventListener("click", async () => {
+  weekShellValidation.textContent = "";
+  const validationError = readAndValidateWeekStep();
+  if (validationError) {
+    weekShellValidation.textContent = validationError;
+    return;
+  }
+
+  await persistWeekFlowState();
+
+  if (weekFlowState.step === "delayedTest") {
+    weekFlowState.step = "subgoals";
+    renderWeekFlowStep();
+    return;
+  }
+
+  const currentWeek = dashboardState.weeks[weekFlowState.weekId];
+  currentWeek.subgoalsCompleted = true;
+  currentWeek.status = "completed";
+  dashboardState.currentWeek = getNextAvailableWeekId() || weekFlowState.weekId;
+
+  await saveUserStudyProfile(currentUserId, {
+    currentWeek: dashboardState.currentWeek,
+    assignedCondition: dashboardState.assignedCondition,
+    weekProgress: summarizeWeekProgress(),
+  });
+  resetWeekFlowState();
+  showAppView();
+});
+
 onAuthReady((user) => {
   if (!user) {
     showAuthView();
     return;
   }
 
-  handleAuthenticatedUser(user);
+  void handleAuthenticatedUser(user);
 });
 
 function initializeInterface() {
@@ -224,22 +376,339 @@ function setAuthMode(mode) {
 }
 
 function showAuthView() {
+  resetOnboardingState();
+  resetDashboardState();
+  resetWeekFlowState();
   authShell.classList.remove("hidden");
+  onboardingShell.classList.add("hidden");
+  dashboardShell.classList.add("hidden");
+  weekShell.classList.add("hidden");
   appShell.classList.add("hidden");
   authPassword.value = "";
+  authEmail.value = "";
 }
 
 function showAppView() {
   authShell.classList.add("hidden");
+  onboardingShell.classList.add("hidden");
+  dashboardShell.classList.add("hidden");
+  weekShell.classList.add("hidden");
   appShell.classList.remove("hidden");
 }
 
-function handleAuthenticatedUser(user) {
+function showOnboardingView() {
+  authShell.classList.add("hidden");
+  onboardingShell.classList.remove("hidden");
+  dashboardShell.classList.add("hidden");
+  weekShell.classList.add("hidden");
+  appShell.classList.add("hidden");
+}
+
+function showDashboardView() {
+  authShell.classList.add("hidden");
+  onboardingShell.classList.add("hidden");
+  dashboardShell.classList.remove("hidden");
+  weekShell.classList.add("hidden");
+  appShell.classList.add("hidden");
+  renderDashboard();
+}
+
+function showWeekShellView() {
+  authShell.classList.add("hidden");
+  onboardingShell.classList.add("hidden");
+  dashboardShell.classList.add("hidden");
+  weekShell.classList.remove("hidden");
+  appShell.classList.add("hidden");
+}
+
+async function handleAuthenticatedUser(user) {
+  resetOnboardingState();
+  resetDashboardState();
+  resetWeekFlowState();
   currentUserId = user.uid;
   userIdDisplay.textContent = currentUserId;
   authUserDisplay.textContent = user.email || user.uid;
   authError.textContent = "";
-  showAppView();
+
+  try {
+    const savedData = await getUserOnboarding(user.uid);
+    mergeOnboardingState(savedData.profile || {}, savedData.subgoals || {});
+  } catch (error) {
+    console.error("Onboarding load error:", error);
+  }
+
+  if (onboardingState.completed) {
+    await loadDashboardState();
+    showDashboardView();
+    return;
+  }
+
+  showOnboardingView();
+  renderOnboardingStep();
+}
+
+async function loadDashboardState() {
+  try {
+    const [onboardingData, weekData] = await Promise.all([
+      getUserOnboarding(currentUserId),
+      getUserWeekProgress(currentUserId),
+    ]);
+
+    dashboardState.assignedCondition =
+      onboardingData.profile.assignedCondition || "Condition not assigned yet";
+    dashboardState.currentWeek = onboardingData.profile.currentWeek || inferCurrentWeek(weekData);
+    dashboardState.weeks = createDefaultWeeks();
+
+    weekDefinitions.forEach((week) => {
+      dashboardState.weeks[week.id] = {
+        ...dashboardState.weeks[week.id],
+        ...(weekData[week.id] || {}),
+      };
+    });
+  } catch (error) {
+    console.error("Dashboard load error:", error);
+    dashboardState.assignedCondition = "Condition not assigned yet";
+    dashboardState.currentWeek = "week1";
+    dashboardState.weeks = createDefaultWeeks();
+  }
+}
+
+function renderDashboard() {
+  const completedWeeks = countCompletedWeeks();
+  const nextWeekId = getNextAvailableWeekId();
+  dashboardUserName.textContent = authUserDisplay.textContent || currentUserId;
+  dashboardProgressLabel.textContent = `${completedWeeks} of ${weekDefinitions.length} weeks completed`;
+  dashboardProgressCaption.textContent = nextWeekId
+    ? `Current week: ${formatWeekLabel(nextWeekId)}`
+    : "All study weeks are completed";
+  dashboardProgressFill.style.width = `${(completedWeeks / weekDefinitions.length) * 100}%`;
+
+  weekCardList.innerHTML = weekDefinitions
+    .map((week) => {
+      const weekState = dashboardState.weeks[week.id];
+      const action = getWeekAction(week.id, weekState);
+
+      return `
+        <article class="week-entry-card">
+          <span class="week-entry-status">${escapeHtml(action.statusLabel)}</span>
+          <h3>${escapeHtml(week.label)}</h3>
+          <p class="week-entry-meta">
+            ${escapeHtml(action.description)}
+          </p>
+          <button
+            class="week-entry-action ${action.completed ? "completed" : ""} ${action.locked ? "locked" : ""}"
+            type="button"
+            data-week-action="${week.id}"
+            ${action.completed || action.locked ? "disabled" : ""}
+          >
+            ${escapeHtml(action.buttonLabel)}
+          </button>
+        </article>
+      `;
+    })
+    .join("");
+
+  document.querySelectorAll("[data-week-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const weekId = button.getAttribute("data-week-action");
+      await openWeekFlow(weekId);
+    });
+  });
+}
+
+async function openWeekFlow(weekId) {
+  const weekState = dashboardState.weeks[weekId];
+
+  if (isWeekComplete(weekState) || !isWeekUnlocked(weekId)) {
+    return;
+  }
+
+  if (weekState.subgoalsCompleted && weekState.status === "in_progress") {
+    dashboardState.currentWeek = weekId;
+    await saveUserStudyProfile(currentUserId, {
+      currentWeek: dashboardState.currentWeek,
+      assignedCondition: dashboardState.assignedCondition,
+      weekProgress: summarizeWeekProgress(),
+    });
+    showAppView();
+    return;
+  }
+
+  weekFlowState.weekId = weekId;
+  weekFlowState.delayedTestAnswers = weekState.delayedTestAnswers || {};
+  weekFlowState.subgoals =
+    weekState.subgoals && weekState.subgoals.length === 3
+      ? weekState.subgoals
+      : createDefaultWeekSubgoals();
+  weekFlowState.step =
+    weekId === "week1" || weekState.delayedTestCompleted ? "subgoals" : "delayedTest";
+
+  const nextStatus = weekState.status === "completed" ? "completed" : "in_progress";
+  dashboardState.weeks[weekId] = {
+    ...weekState,
+    status: nextStatus,
+    startedAt: weekState.startedAt || new Date().toISOString(),
+  };
+  dashboardState.currentWeek = weekId;
+
+  await saveUserWeek(currentUserId, weekId, {
+    ...dashboardState.weeks[weekId],
+    delayedTestCompleted: Boolean(weekState.delayedTestCompleted),
+    subgoalsCompleted: Boolean(weekState.subgoalsCompleted),
+    delayedTestAnswers: weekFlowState.delayedTestAnswers,
+    subgoals: weekFlowState.subgoals,
+  });
+  await saveUserStudyProfile(currentUserId, {
+    currentWeek: dashboardState.currentWeek,
+    assignedCondition: dashboardState.assignedCondition,
+    weekProgress: summarizeWeekProgress(),
+  });
+
+  showWeekShellView();
+  renderWeekFlowStep();
+}
+
+function renderWeekFlowStep() {
+  const weekLabel = formatWeekLabel(weekFlowState.weekId);
+  const weekState = dashboardState.weeks[weekFlowState.weekId];
+  weekShellEyebrow.textContent = weekLabel;
+  weekShellValidation.textContent = "";
+
+  if (weekFlowState.step === "delayedTest") {
+    weekShellTitle.textContent = `Short Delayed Test`;
+    weekShellSubtitle.textContent =
+      "This is a placeholder delayed-test framework. Replace the example questions later with finalized study content.";
+    weekShellNext.textContent = "Submit Delayed Test";
+    weekShellContent.innerHTML = `
+      <section class="onboarding-section">
+        <p class="inline-note">
+          ${escapeHtml(weekLabel)} starts with a short delayed test before sub-goal planning.
+        </p>
+        <div class="quiz-list">
+          ${getDelayedTestQuestions(weekFlowState.weekId)
+            .map((question, index) => renderDelayedQuestionCard(question, index))
+            .join("")}
+        </div>
+      </section>
+    `;
+    return;
+  }
+
+  weekShellTitle.textContent = `Sub-goal Planning`;
+  weekShellSubtitle.textContent =
+    weekFlowState.weekId === "week1"
+      ? ""
+      : "";
+  weekShellNext.textContent = "Save Sub-goals and Continue";
+  weekShellContent.innerHTML = `
+    <section class="onboarding-section">
+      <div class="subgoal-list">
+        ${weekFlowState.subgoals
+          .map(
+            (goal, index) => `
+              <article class="subgoal-card">
+                <!-- <h3>${escapeHtml(weekLabel)} Sub-goal ${index + 1}</h3> -->
+                <div class="form-grid">
+                  <div class="field-group full-width">
+                    <label for="weekly-goal-question-${index}">Sub-goal question</label>
+                    <input
+                      id="weekly-goal-question-${index}"
+                      type="text"
+                      value="${escapeHtml(goal.question)}"
+                      placeholder="What do you want to focus on this week?"
+                    />
+                  </div>
+                  <div class="field-group">
+                    <label for="weekly-goal-type-${index}">Goal type</label>
+                    <select id="weekly-goal-type-${index}">
+                      ${renderSelectOptions(
+                        ["Concept", "Evidence", "Comparison", "Application"],
+                        goal.type
+                      )}
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="weekly-goal-importance-${index}">Importance</label>
+                    <input
+                      id="weekly-goal-importance-${index}"
+                      type="range"
+                      min="1"
+                      max="7"
+                      value="${escapeHtml(goal.importance)}"
+                    />
+                    <span class="scale-value">Current value: <strong id="weekly-goal-importance-value-${index}">${escapeHtml(
+                      goal.importance
+                    )}</strong> / 7</span>
+                  </div>
+                  <div class="field-group full-width">
+                    <label for="weekly-goal-confidence-${index}">Confidence</label>
+                    <input
+                      id="weekly-goal-confidence-${index}"
+                      type="range"
+                      min="1"
+                      max="7"
+                      value="${escapeHtml(goal.confidence)}"
+                    />
+                    <span class="scale-value">Current value: <strong id="weekly-goal-confidence-value-${index}">${escapeHtml(
+                      goal.confidence
+                    )}</strong> / 7</span>
+                  </div>
+                </div>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+
+  weekFlowState.subgoals.forEach((_, index) => {
+    attachScaleMirror(`weekly-goal-importance-${index}`, `weekly-goal-importance-value-${index}`);
+    attachScaleMirror(`weekly-goal-confidence-${index}`, `weekly-goal-confidence-value-${index}`);
+  });
+}
+
+function renderDelayedQuestionCard(question, index) {
+  if (question.type === "shortAnswer") {
+    return `
+      <article class="question-card">
+        <h3>Question ${index + 1}</h3>
+        <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
+        <div class="field-group full-width">
+          <label for="${question.id}">Short answer</label>
+          <textarea id="${question.id}" placeholder="Type your response here...">${escapeHtml(
+            weekFlowState.delayedTestAnswers[question.id] || ""
+          )}</textarea>
+        </div>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="question-card">
+      <h3>Question ${index + 1}</h3>
+      <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
+      <div class="option-list">
+        ${question.options
+          .map(
+            (option) => `
+              <label>
+                <input
+                  type="radio"
+                  name="${question.id}"
+                  value="${escapeHtml(option)}"
+                  ${
+                    weekFlowState.delayedTestAnswers[question.id] === option ? "checked" : ""
+                  }
+                />
+                ${escapeHtml(option)}
+              </label>
+            `
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
 }
 
 function renderResults(results) {
@@ -421,4 +890,706 @@ function mapAuthError(error) {
   }
 
   return error && error.message ? error.message : "Authentication failed.";
+}
+
+function mergeOnboardingState(profile, subgoalDoc) {
+  onboardingState.completed = Boolean(profile.onboardingCompleted);
+  onboardingState.step =
+    onboardingSteps.includes(profile.onboardingStep) && !profile.onboardingCompleted
+      ? profile.onboardingStep
+      : profile.onboardingCompleted
+        ? "complete"
+        : "welcome";
+
+  onboardingState.consentAgreed = Boolean(profile.consentAgreed);
+  onboardingState.demographics = {
+    ...onboardingState.demographics,
+    ...(profile.demographics || {}),
+  };
+  onboardingState.quizAnswers = profile.baselineQuizAnswers || {};
+
+  if (subgoalDoc.goal1 || subgoalDoc.goal2 || subgoalDoc.goal3) {
+    onboardingState.subgoals = [
+      subgoalDoc.goal1 || createDefaultSubgoal(1),
+      subgoalDoc.goal2 || createDefaultSubgoal(2),
+      subgoalDoc.goal3 || createDefaultSubgoal(3),
+    ];
+  }
+}
+
+function renderOnboardingStep() {
+  const step = onboardingState.step;
+  const stepIndex = onboardingSteps.indexOf(step);
+  onboardingStepCount.textContent = `Step ${stepIndex + 1} of ${onboardingSteps.length}`;
+  onboardingProgressBar.style.width = `${((stepIndex + 1) / onboardingSteps.length) * 100}%`;
+  onboardingValidation.textContent = "";
+  onboardingBack.disabled = step === "welcome";
+
+  if (step === "welcome") {
+    onboardingTitle.textContent = "Welcome to Week 0";
+    onboardingSubtitle.textContent =
+      "This onboarding module introduces the study, collects setup information, and prepares your first learning plan.";
+    onboardingNext.textContent = "Start Onboarding";
+    onboardingContent.innerHTML = `
+      <section class="onboarding-section">
+        <div class="onboarding-panel">
+          <p class="onboarding-copy">
+            Week 0 is the setup and preparation phase for this longitudinal learning study.
+            You will review a consent placeholder, complete a short background form, preview the
+            baseline quiz framework, and define three initial sub-goals for the next phase.
+          </p>
+        </div>
+      </section>
+    `;
+    return;
+  }
+
+  if (step === "consent") {
+    onboardingTitle.textContent = "Consent Placeholder";
+    onboardingSubtitle.textContent =
+      "Users must acknowledge participation before continuing. Replace this text with your approved consent form later.";
+    onboardingNext.textContent = "Continue";
+    onboardingContent.innerHTML = `
+      <section class="onboarding-section">
+        <div class="onboarding-panel consent-box">
+          <p class="onboarding-copy">
+            Placeholder study consent text. 
+          </p>
+          <p class="onboarding-copy">
+            Placeholder privacy and participation statement. 
+          </p>
+        </div>
+        <label class="consent-check">
+          <input id="consent-agree" type="checkbox" ${onboardingState.consentAgreed ? "checked" : ""} />
+          <span>I agree to participate in this research study.</span>
+        </label>
+      </section>
+    `;
+    return;
+  }
+
+  if (step === "demographics") {
+    onboardingTitle.textContent = "Basic Demographics";
+    onboardingSubtitle.textContent =
+      "This information supports participant profiling for the study and can be resumed later.";
+    onboardingNext.textContent = "Save and Continue";
+    onboardingContent.innerHTML = `
+      <section class="onboarding-section">
+        <div class="form-grid">
+          <div class="field-group">
+            <label for="age-range">Age range</label>
+            <select id="age-range">
+              ${renderSelectOptions(
+                [
+                  "",
+                  "18-24",
+                  "25-34",
+                  "35-44",
+                  "45-54",
+                  "55-64",
+                  "65+",
+                ],
+                onboardingState.demographics.ageRange,
+                "Select age range"
+              )}
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="education-level">Education level</label>
+            <select id="education-level">
+              ${renderSelectOptions(
+                [
+                  "",
+                  "High school",
+                  "Some college",
+                  "Bachelor's degree",
+                  "Master's degree",
+                  "Doctoral degree",
+                  "Other",
+                ],
+                onboardingState.demographics.educationLevel,
+                "Select education level"
+              )}
+            </select>
+          </div>
+          <div class="field-group full-width">
+            <label for="primary-language">Primary language</label>
+            <input id="primary-language" type="text" value="${escapeHtml(
+              onboardingState.demographics.primaryLanguage
+            )}" placeholder="e.g. English" />
+          </div>
+          <div class="field-group full-width">
+            <label for="search-engine-familiarity">Familiarity with search engines</label>
+            <input
+              id="search-engine-familiarity"
+              type="range"
+              min="1"
+              max="7"
+              value="${escapeHtml(onboardingState.demographics.searchEngineFamiliarity)}"
+            />
+            <span class="scale-value">Current value: <strong id="search-engine-familiarity-value">${escapeHtml(
+              onboardingState.demographics.searchEngineFamiliarity
+            )}</strong> / 7</span>
+          </div>
+          <div class="field-group full-width">
+            <label for="conversational-ai-familiarity">Familiarity with conversational AI tools (e.g., ChatGPT)</label>
+            <input
+              id="conversational-ai-familiarity"
+              type="range"
+              min="1"
+              max="7"
+              value="${escapeHtml(onboardingState.demographics.conversationalAiFamiliarity)}"
+            />
+            <span class="scale-value">Current value: <strong id="conversational-ai-familiarity-value">${escapeHtml(
+              onboardingState.demographics.conversationalAiFamiliarity
+            )}</strong> / 7</span>
+          </div>
+          <div class="field-group full-width">
+            <label for="technology-usage-frequency">Technology familiarity and usage: frequency of use</label>
+            <select id="technology-usage-frequency">
+              ${renderSelectOptions(
+                ["", "Daily", "Weekly", "Monthly", "Rarely"],
+                onboardingState.demographics.technologyUsageFrequency,
+                "Select frequency of use"
+              )}
+            </select>
+          </div>
+        </div>
+      </section>
+    `;
+
+    attachScaleMirror("search-engine-familiarity", "search-engine-familiarity-value");
+    attachScaleMirror(
+      "conversational-ai-familiarity",
+      "conversational-ai-familiarity-value"
+    );
+    return;
+  }
+
+  if (step === "quiz") {
+    onboardingTitle.textContent = "Baseline Knowledge Test";
+    onboardingSubtitle.textContent =
+      "This is the framework only. The real study questions can be loaded later from Firestore.";
+    onboardingNext.textContent = "Save and Continue";
+    onboardingContent.innerHTML = `
+      <section class="onboarding-section">
+        <p class="inline-note">
+          Placeholder responses are collected only to preserve the future quiz structure.
+        </p>
+        <div class="quiz-list">
+          ${baselineQuizQuestions
+            .map(
+              (question, index) => `
+                <article class="quiz-card">
+                  <h3>Question ${index + 1}</h3>
+                  <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
+                  <div class="option-list">
+                    ${question.options
+                      .map(
+                        (option) => `
+                          <label>
+                            <input
+                              type="radio"
+                              name="${question.id}"
+                              value="${escapeHtml(option)}"
+                              ${
+                                onboardingState.quizAnswers[question.id] === option ? "checked" : ""
+                              }
+                            />
+                            ${escapeHtml(option)}
+                          </label>
+                        `
+                      )
+                      .join("")}
+                  </div>
+                </article>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+    `;
+    return;
+  }
+
+  if (step === "subgoals") {
+    onboardingTitle.textContent = "Initial Sub-goal Planning";
+    onboardingSubtitle.textContent =
+      "Define exactly three sub-goals for the next learning phase. These will be stored in Firestore.";
+    onboardingNext.textContent = "Submit Week 0";
+    onboardingContent.innerHTML = `
+      <section class="onboarding-section">
+        <div class="subgoal-list">
+          ${onboardingState.subgoals
+            .map(
+              (goal, index) => `
+                <article class="subgoal-card">
+                  <h3>Sub-goal ${index + 1}</h3>
+                  <div class="form-grid">
+                    <div class="field-group full-width">
+                      <label for="goal-question-${index}">Goal question</label>
+                      <input
+                        id="goal-question-${index}"
+                        type="text"
+                        value="${escapeHtml(goal.question)}"
+                        placeholder="What do you want to understand or achieve?"
+                      />
+                    </div>
+                    <div class="field-group">
+                      <label for="goal-type-${index}">Goal type</label>
+                      <select id="goal-type-${index}">
+                        ${renderSelectOptions(
+                          ["Concept", "Evidence", "Comparison", "Application"],
+                          goal.type
+                        )}
+                      </select>
+                    </div>
+                    <div class="field-group">
+                      <label for="goal-importance-${index}">Importance</label>
+                      <input
+                        id="goal-importance-${index}"
+                        type="range"
+                        min="1"
+                        max="7"
+                        value="${escapeHtml(goal.importance)}"
+                      />
+                      <span class="scale-value">Current value: <strong id="goal-importance-value-${index}">${escapeHtml(
+                        goal.importance
+                      )}</strong> / 7</span>
+                    </div>
+                    <div class="field-group full-width">
+                      <label for="goal-confidence-${index}">Confidence</label>
+                      <input
+                        id="goal-confidence-${index}"
+                        type="range"
+                        min="1"
+                        max="7"
+                        value="${escapeHtml(goal.confidence)}"
+                      />
+                      <span class="scale-value">Current value: <strong id="goal-confidence-value-${index}">${escapeHtml(
+                        goal.confidence
+                      )}</strong> / 7</span>
+                    </div>
+                  </div>
+                </article>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+    `;
+
+    onboardingState.subgoals.forEach((_, index) => {
+      attachScaleMirror(`goal-importance-${index}`, `goal-importance-value-${index}`);
+      attachScaleMirror(`goal-confidence-${index}`, `goal-confidence-value-${index}`);
+    });
+    return;
+  }
+
+  onboardingTitle.textContent = "Week 0 Completed";
+  onboardingSubtitle.textContent =
+    "Your setup data has been saved. You can now continue to the main research dashboard.";
+  onboardingNext.textContent = "Continue to Dashboard";
+  onboardingContent.innerHTML = `
+    <section class="onboarding-section">
+      <span class="completion-highlight">Week 0 completed</span>
+      <div class="onboarding-panel">
+        <p class="onboarding-copy">
+          Thank you for completing the onboarding phase. Your consent response, demographic profile,
+          baseline framework data, and initial sub-goals have been stored for the next stage.
+        </p>
+      </div>
+    </section>
+  `;
+}
+
+function readAndValidateCurrentStep() {
+  if (onboardingState.step === "welcome") {
+    return "";
+  }
+
+  if (onboardingState.step === "consent") {
+    onboardingState.consentAgreed = Boolean(
+      document.getElementById("consent-agree") &&
+        document.getElementById("consent-agree").checked
+    );
+    return onboardingState.consentAgreed
+      ? ""
+      : "You must agree to participate before continuing.";
+  }
+
+  if (onboardingState.step === "demographics") {
+    onboardingState.demographics = {
+      ageRange: document.getElementById("age-range").value,
+      primaryLanguage: document.getElementById("primary-language").value.trim(),
+      educationLevel: document.getElementById("education-level").value,
+      searchEngineFamiliarity: document.getElementById("search-engine-familiarity").value,
+      conversationalAiFamiliarity: document.getElementById(
+        "conversational-ai-familiarity"
+      ).value,
+      technologyUsageFrequency: document.getElementById("technology-usage-frequency").value,
+    };
+
+    if (
+      !onboardingState.demographics.ageRange ||
+      !onboardingState.demographics.primaryLanguage ||
+      !onboardingState.demographics.educationLevel ||
+      !onboardingState.demographics.technologyUsageFrequency
+    ) {
+      return "Please complete all required demographic fields.";
+    }
+    return "";
+  }
+
+  if (onboardingState.step === "quiz") {
+    const answers = {};
+    baselineQuizQuestions.forEach((question) => {
+      const selected = document.querySelector(`input[name="${question.id}"]:checked`);
+      answers[question.id] = selected ? selected.value : "";
+    });
+    onboardingState.quizAnswers = answers;
+    return "";
+  }
+
+  if (onboardingState.step === "subgoals") {
+    const nextGoals = onboardingState.subgoals.map((goal, index) => ({
+      question: document.getElementById(`goal-question-${index}`).value.trim(),
+      type: document.getElementById(`goal-type-${index}`).value,
+      importance: document.getElementById(`goal-importance-${index}`).value,
+      confidence: document.getElementById(`goal-confidence-${index}`).value,
+    }));
+
+    const incompleteGoal = nextGoals.find((goal) => !goal.question || !goal.type);
+    if (incompleteGoal) {
+      return "Please complete all three sub-goal entries before submitting Week 0.";
+    }
+
+    onboardingState.subgoals = nextGoals;
+    return "";
+  }
+
+  return "";
+}
+
+async function persistOnboardingProgress() {
+  const userDocPayload = {
+    onboardingCompleted: onboardingState.completed,
+    onboardingStep: onboardingState.step,
+    consentAgreed: onboardingState.consentAgreed,
+    demographics: onboardingState.demographics,
+    baselineQuizAnswers: onboardingState.quizAnswers,
+  };
+
+  await saveUserOnboarding(currentUserId, userDocPayload);
+
+  if (onboardingState.subgoals.length === 3) {
+    await saveWeek0Subgoals(currentUserId, onboardingState.subgoals);
+  }
+}
+
+function readAndValidateWeekStep() {
+  if (weekFlowState.step === "delayedTest") {
+    const answers = {};
+    const questions = getDelayedTestQuestions(weekFlowState.weekId);
+
+    for (const question of questions) {
+      if (question.type === "shortAnswer") {
+        const value = document.getElementById(question.id).value.trim();
+        if (!value) {
+          return "Please answer all delayed-test questions before continuing.";
+        }
+        answers[question.id] = value;
+        continue;
+      }
+
+      const selected = document.querySelector(`input[name="${question.id}"]:checked`);
+      if (!selected) {
+        return "Please answer all delayed-test questions before continuing.";
+      }
+      answers[question.id] = selected.value;
+    }
+
+    weekFlowState.delayedTestAnswers = answers;
+    return "";
+  }
+
+  const nextGoals = weekFlowState.subgoals.map((goal, index) => ({
+    question: document.getElementById(`weekly-goal-question-${index}`).value.trim(),
+    type: document.getElementById(`weekly-goal-type-${index}`).value,
+    importance: document.getElementById(`weekly-goal-importance-${index}`).value,
+    confidence: document.getElementById(`weekly-goal-confidence-${index}`).value,
+  }));
+
+  const incompleteGoal = nextGoals.find((goal) => !goal.question || !goal.type);
+  if (incompleteGoal) {
+    return "Please complete all three weekly sub-goals before continuing.";
+  }
+
+  weekFlowState.subgoals = nextGoals;
+  return "";
+}
+
+async function persistWeekFlowState() {
+  const weekId = weekFlowState.weekId;
+  const currentWeek = dashboardState.weeks[weekId];
+  const payload = {
+    ...currentWeek,
+    delayedTestCompleted:
+      weekId === "week1" ? true : weekFlowState.step === "delayedTest" || currentWeek.delayedTestCompleted,
+    subgoalsCompleted: weekFlowState.step === "subgoals",
+    delayedTestAnswers:
+      weekId === "week1" ? {} : weekFlowState.delayedTestAnswers,
+    subgoals: weekFlowState.subgoals,
+  };
+
+  if (weekFlowState.step === "delayedTest") {
+    payload.delayedTestCompleted = true;
+    payload.subgoalsCompleted = false;
+  }
+
+  if (weekFlowState.step === "subgoals") {
+    payload.delayedTestCompleted = weekId === "week1" ? true : true;
+    payload.subgoalsCompleted = true;
+  }
+
+  dashboardState.weeks[weekId] = payload;
+
+  await saveUserWeek(currentUserId, weekId, payload);
+}
+
+function setOnboardingStep(step) {
+  onboardingState.step = step;
+  renderOnboardingStep();
+}
+
+function attachScaleMirror(inputId, valueId) {
+  const input = document.getElementById(inputId);
+  const value = document.getElementById(valueId);
+  if (!input || !value) {
+    return;
+  }
+
+  input.addEventListener("input", () => {
+    value.textContent = input.value;
+  });
+}
+
+function renderSelectOptions(options, selectedValue, placeholder) {
+  const rendered = [];
+  if (placeholder) {
+    rendered.push(
+      `<option value="" ${selectedValue ? "" : "selected"} disabled>${escapeHtml(placeholder)}</option>`
+    );
+  }
+
+  options.forEach((option) => {
+    if (!option) {
+      return;
+    }
+
+    rendered.push(
+      `<option value="${escapeHtml(option)}" ${
+        option === selectedValue ? "selected" : ""
+      }>${escapeHtml(option)}</option>`
+    );
+  });
+
+  return rendered.join("");
+}
+
+function createDefaultSubgoals() {
+  return [createDefaultSubgoal(1), createDefaultSubgoal(2), createDefaultSubgoal(3)];
+}
+
+function createDefaultWeeks() {
+  return weekDefinitions.reduce((accumulator, week) => {
+    accumulator[week.id] = {
+      status: "not_started",
+      delayedTestCompleted: week.id === "week1",
+      subgoalsCompleted: false,
+      delayedTestAnswers: {},
+      subgoals: createDefaultWeekSubgoals(),
+    };
+    return accumulator;
+  }, {});
+}
+
+function createDefaultWeekSubgoals() {
+  return [createDefaultWeekSubgoal(1), createDefaultWeekSubgoal(2), createDefaultWeekSubgoal(3)];
+}
+
+function createDefaultWeekSubgoal(index) {
+  return {
+    order: index,
+    question: "",
+    type: "Concept",
+    importance: "4",
+    confidence: "4",
+  };
+}
+
+function createDefaultWeekState(weekId) {
+  return {
+    ...createDefaultWeeks()[weekId],
+  };
+}
+
+function resetOnboardingState() {
+  onboardingState.step = "welcome";
+  onboardingState.completed = false;
+  onboardingState.consentAgreed = false;
+  onboardingState.demographics = {
+    ageRange: "",
+    primaryLanguage: "",
+    educationLevel: "",
+    searchEngineFamiliarity: "4",
+    conversationalAiFamiliarity: "4",
+    technologyUsageFrequency: "",
+  };
+  onboardingState.quizAnswers = {};
+  onboardingState.subgoals = createDefaultSubgoals();
+}
+
+function resetDashboardState() {
+  dashboardState.assignedCondition = "Condition not assigned yet";
+  dashboardState.currentWeek = "week1";
+  dashboardState.weeks = createDefaultWeeks();
+}
+
+function resetWeekFlowState() {
+  weekFlowState.weekId = "";
+  weekFlowState.step = "";
+  weekFlowState.delayedTestAnswers = {};
+  weekFlowState.subgoals = createDefaultWeekSubgoals();
+}
+
+function createDefaultSubgoal(index) {
+  return {
+    order: index,
+    question: "",
+    type: "Concept",
+    importance: "4",
+    confidence: "4",
+  };
+}
+
+function getWeekAction(weekId, weekState) {
+  if (isWeekComplete(weekState)) {
+    return {
+      statusLabel: "Completed",
+      buttonLabel: "Completed",
+      description: "This week has already been fully completed.",
+      completed: true,
+      locked: false,
+    };
+  }
+
+  if (!isWeekUnlocked(weekId)) {
+    const previousWeekIndex = weekDefinitions.findIndex((week) => week.id === weekId) - 1;
+    const previousWeekId = weekDefinitions[previousWeekIndex].id;
+
+    return {
+      statusLabel: "Locked",
+      buttonLabel: "Locked",
+      description: `Complete ${formatWeekLabel(previousWeekId)} before this week becomes available.`,
+      completed: false,
+      locked: true,
+    };
+  }
+
+  if (weekState.status === "in_progress") {
+    if (weekState.subgoalsCompleted) {
+      return {
+        statusLabel: "In Progress",
+        buttonLabel: `Continue ${formatWeekLabel(weekId)}`,
+        description: "Weekly setup is finished. Continue into the main research page.",
+        completed: false,
+        locked: false,
+      };
+    }
+
+    return {
+      statusLabel: "In Progress",
+      buttonLabel: `Continue ${formatWeekLabel(weekId)}`,
+      description: "This week has started but still needs delayed-test or sub-goal completion.",
+      completed: false,
+      locked: false,
+    };
+  }
+
+  return {
+    statusLabel: "Not Started",
+    buttonLabel: `Start ${formatWeekLabel(weekId)}`,
+    description:
+      weekId === "week1"
+        ? "Week 1 begins directly with sub-goal planning."
+        : "This week starts with a short delayed test and then sub-goal planning.",
+    completed: false,
+    locked: false,
+  };
+}
+
+function countCompletedWeeks() {
+  return weekDefinitions.filter((week) => isWeekComplete(dashboardState.weeks[week.id])).length;
+}
+
+function inferCurrentWeek(weekData) {
+  const activeWeek = weekDefinitions.find(
+    (week) => weekData[week.id] && weekData[week.id].status === "in_progress"
+  );
+  if (activeWeek) {
+    return activeWeek.id;
+  }
+
+  const nextWeek = weekDefinitions.find((week) => !isWeekComplete(weekData[week.id] || {}));
+  return nextWeek ? nextWeek.id : weekDefinitions[weekDefinitions.length - 1].id;
+}
+
+function getDelayedTestQuestions(weekId) {
+  return delayedTestQuestionsByWeek[weekId] || delayedTestQuestionsByWeek.week2 || [];
+}
+
+function formatWeekLabel(weekId) {
+  const found = weekDefinitions.find((week) => week.id === weekId);
+  return found ? found.label : weekId;
+}
+
+function summarizeWeekProgress() {
+  return weekDefinitions.reduce((accumulator, week) => {
+    const weekState = dashboardState.weeks[week.id];
+    accumulator[week.id] = {
+      status: weekState.status,
+      delayedTestCompleted: weekState.delayedTestCompleted,
+      subgoalsCompleted: weekState.subgoalsCompleted,
+    };
+    return accumulator;
+  }, {});
+}
+
+function isWeekComplete(weekState) {
+  return weekState.status === "completed" || Boolean(weekState.subgoalsCompleted);
+}
+
+function isWeekUnlocked(weekId) {
+  const currentIndex = weekDefinitions.findIndex((week) => week.id === weekId);
+  if (currentIndex <= 0) {
+    return true;
+  }
+
+  const previousWeekId = weekDefinitions[currentIndex - 1].id;
+  return isWeekComplete(dashboardState.weeks[previousWeekId] || {});
+}
+
+function getNextAvailableWeekId() {
+  const nextWeek = weekDefinitions.find((week) => !isWeekComplete(dashboardState.weeks[week.id]));
+  return nextWeek ? nextWeek.id : "";
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

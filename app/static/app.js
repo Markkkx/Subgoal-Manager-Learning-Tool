@@ -12,6 +12,8 @@ import {
   saveUserStudyProfile,
   saveWeek0Subgoals,
   saveUserWeek,
+  getPostTestQuestions,
+  savePostTest,
 } from "./firebase-firestore.js";
 import { baselineQuizQuestions } from "./onboarding-quiz.js";
 import { delayedTestQuestionsByWeek } from "./delayed-test-questions.js";
@@ -42,6 +44,12 @@ const weekShellValidation = document.getElementById("week-shell-validation");
 const weekShellBack = document.getElementById("week-shell-back");
 const weekShellNext = document.getElementById("week-shell-next");
 const appShell = document.getElementById("app-shell");
+const postTestShell = document.getElementById("post-test-shell");
+const postTestContent = document.getElementById("post-test-content");
+const postTestValidation = document.getElementById("post-test-validation");
+const postTestButton = document.getElementById("post-test-button");
+const postTestBack = document.getElementById("post-test-back");
+const postTestSubmit = document.getElementById("post-test-submit");
 const authUserDisplay = document.getElementById("auth-user-display");
 const loginTab = document.getElementById("login-tab");
 const signupTab = document.getElementById("signup-tab");
@@ -111,9 +119,13 @@ const weekFlowState = {
   step: "",
   delayedTestAnswers: {},
   subgoals: createDefaultWeekSubgoals(),
+  currentSessionIndex: 0,
+  sessionTimeRemaining: 25 * 60,
 };
 
-sessionIdDisplay.textContent = sessionId;
+if (sessionIdDisplay) {
+  sessionIdDisplay.textContent = sessionId;
+}
 initializeInterface();
 
 searchForm.addEventListener("submit", async (event) => {
@@ -128,7 +140,9 @@ searchForm.addEventListener("submit", async (event) => {
   currentQuery = queryText;
   statusMessage.textContent = "Searching...";
   resultsContainer.innerHTML = "";
-  summaryText.textContent = "Generating a search summary...";
+  if (summaryText) {
+    summaryText.textContent = "Generating a search summary...";
+  }
 
   try {
     const response = await fetch("/api/search", {
@@ -327,7 +341,8 @@ weekShellNext.addEventListener("click", async () => {
 
   const currentWeek = dashboardState.weeks[weekFlowState.weekId];
   currentWeek.subgoalsCompleted = true;
-  currentWeek.status = "completed";
+  currentWeek.status = "in_progress";
+  currentWeek.subgoals = weekFlowState.subgoals;
   dashboardState.currentWeek = getNextAvailableWeekId() || weekFlowState.weekId;
 
   await saveUserStudyProfile(currentUserId, {
@@ -335,7 +350,13 @@ weekShellNext.addEventListener("click", async () => {
     assignedCondition: dashboardState.assignedCondition,
     weekProgress: summarizeWeekProgress(),
   });
+  const savedSubgoals = weekFlowState.subgoals;
+  const savedWeekId = weekFlowState.weekId;
   resetWeekFlowState();
+  weekFlowState.subgoals = savedSubgoals;
+  weekFlowState.weekId = savedWeekId;
+  weekFlowState.currentSessionIndex = 0;
+  weekFlowState.sessionTimeRemaining = 25 * 60;
   showAppView();
 });
 
@@ -388,12 +409,242 @@ function showAuthView() {
   authEmail.value = "";
 }
 
+// ── Subgoal Sidebar ──────────────────────────────────────────────────────────
+
+let sidebarExpanded = false;
+
+function renderSubgoalSidebar() {
+  const dotsContainer = document.getElementById("sidebar-dots");
+  const listContainer = document.getElementById("sidebar-list");
+  if (!dotsContainer || !listContainer) return;
+
+  const subgoals = weekFlowState.subgoals;
+
+  dotsContainer.innerHTML = subgoals
+    .map(
+      (goal, i) =>
+        `<div class="sidebar-dot-wrap" title="${escapeHtml(goal.question || `Subgoal ${i + 1}`)}">
+          <div class="sidebar-dot status-${goal.status || "not_started"}"></div>
+        </div>`
+    )
+    .join("");
+
+  listContainer.innerHTML = subgoals
+    .map(
+      (goal, i) => `
+      <li class="sidebar-item">
+        <div class="sidebar-item-dot status-${goal.status || "not_started"}"></div>
+        <div class="sidebar-item-body">
+          <span class="sidebar-item-text" data-index="${i}" contenteditable="false">${escapeHtml(goal.question || `Subgoal ${i + 1}`)}</span>
+          <select class="sidebar-status-select" data-index="${i}">
+            <option value="not_started" ${(goal.status || "not_started") === "not_started" ? "selected" : ""}>Not Started</option>
+            <option value="in_progress" ${goal.status === "in_progress" ? "selected" : ""}>In Progress</option>
+            <option value="completed" ${goal.status === "completed" ? "selected" : ""}>Completed</option>
+          </select>
+        </div>
+      </li>`
+    )
+    .join("");
+
+  listContainer.querySelectorAll(".sidebar-status-select").forEach((select) => {
+    select.addEventListener("change", async (e) => {
+      const idx = parseInt(e.target.dataset.index);
+      const newStatus = e.target.value;
+      weekFlowState.subgoals[idx].status = newStatus;
+      renderSubgoalSidebar();
+      if (currentUserId && weekFlowState.weekId) {
+        await saveUserWeek(currentUserId, weekFlowState.weekId, {
+          ...dashboardState.weeks[weekFlowState.weekId],
+          subgoals: weekFlowState.subgoals,
+        });
+      }
+      if (newStatus === "completed" && idx === weekFlowState.currentSessionIndex) {
+        showMicroCheck(idx);
+      }
+    });
+  });
+
+  listContainer.querySelectorAll(".sidebar-item-text").forEach((span) => {
+    span.addEventListener("click", (e) => {
+      e.target.contentEditable = "true";
+      e.target.focus();
+    });
+    span.addEventListener("blur", async (e) => {
+      e.target.contentEditable = "false";
+      const idx = parseInt(e.target.dataset.index);
+      const newText = e.target.textContent.trim();
+      weekFlowState.subgoals[idx].question = newText;
+      if (currentUserId && weekFlowState.weekId) {
+        await saveUserWeek(currentUserId, weekFlowState.weekId, {
+          ...dashboardState.weeks[weekFlowState.weekId],
+          subgoals: weekFlowState.subgoals,
+        });
+      }
+    });
+  });
+}
+
+function toggleSidebar() {
+  sidebarExpanded = !sidebarExpanded;
+  const sidebar = document.getElementById("subgoal-sidebar");
+  const grid = document.getElementById("layout-grid");
+  sidebar.classList.toggle("expanded", sidebarExpanded);
+  grid.classList.toggle("sidebar-expanded", sidebarExpanded);
+}
+
+document.getElementById("sidebar-toggle").addEventListener("click", toggleSidebar);
+
+// ── Session indicator ─────────────────────────────────────────────────────────
+
+function renderSessionIndicator() {
+  const el = document.getElementById("session-indicator");
+  if (el) el.textContent = `Session ${weekFlowState.currentSessionIndex + 1} of 3`;
+}
+
+// ── Back to Dashboard ─────────────────────────────────────────────────────────
+
+document.getElementById("back-to-dashboard-button").addEventListener("click", async () => {
+  stopCountdown();
+  if (weekFlowState.weekId) {
+    const weekState = dashboardState.weeks[weekFlowState.weekId] || {};
+    await saveUserWeek(currentUserId, weekFlowState.weekId, {
+      ...weekState,
+      subgoals: weekFlowState.subgoals,
+      currentSessionIndex: weekFlowState.currentSessionIndex,
+      sessionTimeRemaining: weekFlowState.sessionTimeRemaining,
+      sessions: weekState.sessions || [null, null, null],
+    });
+  }
+  await loadDashboardState();
+  showDashboardView();
+});
+
+// ── Micro-Check ───────────────────────────────────────────────────────────────
+
+function showMicroCheck(sessionIndex) {
+  const overlay = document.getElementById("micro-check-overlay");
+  const submit = document.getElementById("mc-submit");
+  const error = document.getElementById("mc-error");
+  if (!overlay) return;
+
+  const isLast = sessionIndex >= 2;
+  if (submit) submit.textContent = isLast ? "Finish Week" : "Continue to Next Session";
+  if (error) error.textContent = "";
+
+  // Reset form
+  const form = document.getElementById("micro-check-form");
+  if (form) form.reset();
+  const progressVal = document.getElementById("mc-progress-value");
+  if (progressVal) progressVal.textContent = "4";
+
+  overlay.classList.remove("hidden");
+}
+
+function hideMicroCheck() {
+  const overlay = document.getElementById("micro-check-overlay");
+  if (overlay) overlay.classList.add("hidden");
+}
+
+// Sync range display
+document.getElementById("mc-progress").addEventListener("input", (e) => {
+  const el = document.getElementById("mc-progress-value");
+  if (el) el.textContent = e.target.value;
+});
+
+document.getElementById("micro-check-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const tool = form.tool.value;
+  const activity = form.activity.value;
+  const progress = parseInt(form.progress.value);
+  const error = document.getElementById("mc-error");
+
+  if (!tool || !activity) {
+    if (error) error.textContent = "Please answer all questions before continuing.";
+    return;
+  }
+  if (error) error.textContent = "";
+
+  const sessionIndex = weekFlowState.currentSessionIndex;
+  const microCheck = { tool, activity, progress, completedAt: new Date().toISOString() };
+
+  const weekState = dashboardState.weeks[weekFlowState.weekId] || {};
+  const sessions = weekState.sessions ? [...weekState.sessions] : [null, null, null];
+  sessions[sessionIndex] = microCheck;
+
+  weekFlowState.currentSessionIndex = sessionIndex + 1;
+  weekFlowState.sessionTimeRemaining = 25 * 60;
+
+  dashboardState.weeks[weekFlowState.weekId] = {
+    ...weekState,
+    subgoals: weekFlowState.subgoals,
+    currentSessionIndex: weekFlowState.currentSessionIndex,
+    sessionTimeRemaining: weekFlowState.sessionTimeRemaining,
+    sessions,
+  };
+
+  await saveUserWeek(currentUserId, weekFlowState.weekId, dashboardState.weeks[weekFlowState.weekId]);
+
+  hideMicroCheck();
+
+  if (weekFlowState.currentSessionIndex >= 3) {
+    // All sessions done — mark week complete and return to dashboard
+    dashboardState.weeks[weekFlowState.weekId] = {
+      ...dashboardState.weeks[weekFlowState.weekId],
+      status: "completed",
+      sessionsCompleted: true,
+    };
+    await saveUserWeek(currentUserId, weekFlowState.weekId, dashboardState.weeks[weekFlowState.weekId]);
+    await loadDashboardState();
+    showDashboardView();
+  } else {
+    // Next session
+    startCountdown(25 * 60);
+    renderSessionIndicator();
+    renderSubgoalSidebar();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+let countdownInterval = null;
+
+function startCountdown(initialSeconds) {
+  if (countdownInterval) clearInterval(countdownInterval);
+  const total = 25 * 60;
+  let remaining = initialSeconds !== undefined ? initialSeconds : total;
+  weekFlowState.sessionTimeRemaining = remaining;
+  const bar = document.getElementById("countdown-bar");
+  const label = document.getElementById("countdown-label");
+  function tick() {
+    const m = String(Math.floor(remaining / 60)).padStart(2, "0");
+    const s = String(remaining % 60).padStart(2, "0");
+    if (label) label.textContent = `${m}:${s}`;
+    if (bar) bar.style.setProperty("--progress", remaining / total);
+    weekFlowState.sessionTimeRemaining = remaining;
+    if (remaining <= 0) clearInterval(countdownInterval);
+    remaining--;
+  }
+  tick();
+  countdownInterval = setInterval(tick, 1000);
+}
+
+function stopCountdown() {
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
+}
+
 function showAppView() {
   authShell.classList.add("hidden");
   onboardingShell.classList.add("hidden");
   dashboardShell.classList.add("hidden");
   weekShell.classList.add("hidden");
   appShell.classList.remove("hidden");
+  startCountdown(weekFlowState.sessionTimeRemaining);
+  renderSubgoalSidebar();
+  renderSessionIndicator();
 }
 
 function showOnboardingView() {
@@ -410,7 +661,17 @@ function showDashboardView() {
   dashboardShell.classList.remove("hidden");
   weekShell.classList.add("hidden");
   appShell.classList.add("hidden");
+  postTestShell.classList.add("hidden");
   renderDashboard();
+}
+
+function showPostTestView() {
+  authShell.classList.add("hidden");
+  onboardingShell.classList.add("hidden");
+  dashboardShell.classList.add("hidden");
+  weekShell.classList.add("hidden");
+  appShell.classList.add("hidden");
+  postTestShell.classList.remove("hidden");
 }
 
 function showWeekShellView() {
@@ -426,7 +687,9 @@ async function handleAuthenticatedUser(user) {
   resetDashboardState();
   resetWeekFlowState();
   currentUserId = user.uid;
-  userIdDisplay.textContent = currentUserId;
+  if (userIdDisplay) {
+    userIdDisplay.textContent = currentUserId;
+  }
   authUserDisplay.textContent = user.email || user.uid;
   authError.textContent = "";
 
@@ -475,6 +738,7 @@ async function loadDashboardState() {
 
 function renderDashboard() {
   const completedWeeks = countCompletedWeeks();
+  const allDone = completedWeeks === weekDefinitions.length;
   const nextWeekId = getNextAvailableWeekId();
   dashboardUserName.textContent = authUserDisplay.textContent || currentUserId;
   dashboardProgressLabel.textContent = `${completedWeeks} of ${weekDefinitions.length} weeks completed`;
@@ -514,6 +778,104 @@ function renderDashboard() {
       await openWeekFlow(weekId);
     });
   });
+
+  postTestButton.disabled = !allDone;
+  postTestButton.textContent = allDone ? "Start Post-Test" : "Complete all 4 weeks to unlock";
+  const desc = postTestButton.previousElementSibling;
+  if (desc) {
+    desc.textContent = allDone
+      ? "All weeks complete. You may now take the overall post-test."
+      : "Complete all four weeks before taking the overall post-test.";
+  }
+}
+
+// ── Post-Test ────────────────────────────────────────────────────────────────
+
+postTestButton.addEventListener("click", async () => {
+  showPostTestView();
+  postTestValidation.textContent = "";
+  postTestContent.innerHTML = '<p style="color:var(--muted)">Loading questions…</p>';
+  try {
+    const questions = await getPostTestQuestions();
+    renderPostTestForm(questions);
+  } catch {
+    postTestContent.innerHTML = '<p style="color:#e53e3e">Failed to load questions. Please try again.</p>';
+  }
+});
+
+postTestBack.addEventListener("click", () => {
+  showDashboardView();
+});
+
+postTestSubmit.addEventListener("click", async () => {
+  postTestValidation.textContent = "";
+  const inputs = postTestContent.querySelectorAll("input, textarea, select");
+  const answers = {};
+  let allAnswered = true;
+
+  inputs.forEach((input) => {
+    if (input.type === "radio") {
+      if (input.checked) answers[input.name] = input.value;
+    } else {
+      answers[input.name] = input.value.trim();
+      if (!input.value.trim()) allAnswered = false;
+    }
+  });
+
+  const radioNames = [...new Set([...postTestContent.querySelectorAll("input[type=radio]")].map((r) => r.name))];
+  radioNames.forEach((name) => { if (!answers[name]) allAnswered = false; });
+
+  if (!allAnswered) {
+    postTestValidation.textContent = "Please answer all questions before submitting.";
+    return;
+  }
+
+  postTestSubmit.disabled = true;
+  postTestSubmit.textContent = "Submitting…";
+  try {
+    await savePostTest(currentUserId, answers);
+    postTestContent.innerHTML = '<p style="font-weight:700;color:var(--accent-dark)">Post-test submitted. Thank you!</p>';
+    postTestValidation.textContent = "";
+    postTestSubmit.classList.add("hidden");
+  } catch {
+    postTestValidation.textContent = "Submission failed. Please try again.";
+    postTestSubmit.disabled = false;
+    postTestSubmit.textContent = "Submit Post-Test";
+  }
+});
+
+function renderPostTestForm(questions) {
+  if (!questions.length) {
+    postTestContent.innerHTML = '<p style="color:var(--muted)">No questions available yet.</p>';
+    return;
+  }
+
+  postTestContent.innerHTML = questions
+    .map((q, i) => {
+      const num = i + 1;
+      if (q.type === "multiple_choice" && Array.isArray(q.options)) {
+        return `
+          <div class="quiz-question-card">
+            <p class="quiz-question-text"><strong>${num}.</strong> ${escapeHtml(q.text)}</p>
+            <div class="quiz-options">
+              ${q.options.map((opt) => `
+                <label class="quiz-option-label">
+                  <input type="radio" name="q_${q.id}" value="${escapeHtml(opt)}" required />
+                  ${escapeHtml(opt)}
+                </label>`).join("")}
+            </div>
+          </div>`;
+      }
+      if (q.type === "short_answer") {
+        return `
+          <div class="quiz-question-card">
+            <p class="quiz-question-text"><strong>${num}.</strong> ${escapeHtml(q.text)}</p>
+            <textarea name="q_${q.id}" rows="3" class="quiz-textarea" placeholder="Your answer…"></textarea>
+          </div>`;
+      }
+      return "";
+    })
+    .join("");
 }
 
 async function openWeekFlow(weekId) {
@@ -525,6 +887,13 @@ async function openWeekFlow(weekId) {
 
   if (weekState.subgoalsCompleted && weekState.status === "in_progress") {
     dashboardState.currentWeek = weekId;
+    weekFlowState.weekId = weekId;
+    weekFlowState.subgoals =
+      weekState.subgoals && weekState.subgoals.length === 3
+        ? weekState.subgoals
+        : createDefaultWeekSubgoals();
+    weekFlowState.currentSessionIndex = weekState.currentSessionIndex ?? 0;
+    weekFlowState.sessionTimeRemaining = weekState.sessionTimeRemaining ?? 25 * 60;
     await saveUserStudyProfile(currentUserId, {
       currentWeek: dashboardState.currentWeek,
       assignedCondition: dashboardState.assignedCondition,
@@ -543,7 +912,7 @@ async function openWeekFlow(weekId) {
   weekFlowState.step =
     weekId === "week1" || weekState.delayedTestCompleted ? "subgoals" : "delayedTest";
 
-  const nextStatus = weekState.status === "completed" ? "completed" : "in_progress";
+  const nextStatus = weekState.sessionsCompleted ? "completed" : "in_progress";
   dashboardState.weeks[weekId] = {
     ...weekState,
     status: nextStatus,
@@ -577,7 +946,7 @@ function renderWeekFlowStep() {
   if (weekFlowState.step === "delayedTest") {
     weekShellTitle.textContent = `Short Delayed Test`;
     weekShellSubtitle.textContent =
-      "This is a placeholder delayed-test framework. Replace the example questions later with finalized study content.";
+      " ";
     weekShellNext.textContent = "Submit Delayed Test";
     weekShellContent.innerHTML = `
       <section class="onboarding-section">
@@ -771,13 +1140,18 @@ function renderResults(results) {
 }
 
 function renderSummary(summary) {
+  if (!summaryText) {
+    return;
+  }
+
   if (!summary) {
     summaryText.textContent =
       "No Groq summary is available yet. Add GROQ_API_KEY to enable automatic summaries.";
     return;
   }
 
-  summaryText.textContent = summary;
+  const words = summary.trim().split(/\s+/);
+  summaryText.textContent = words.length > 150 ? words.slice(0, 150).join(" ") + "…" : summary;
 }
 
 function renderKeywords(keywords) {
@@ -1407,8 +1781,12 @@ function createDefaultWeeks() {
       status: "not_started",
       delayedTestCompleted: week.id === "week1",
       subgoalsCompleted: false,
+      sessionsCompleted: false,
       delayedTestAnswers: {},
       subgoals: createDefaultWeekSubgoals(),
+      currentSessionIndex: 0,
+      sessionTimeRemaining: 25 * 60,
+      sessions: [null, null, null],
     };
     return accumulator;
   }, {});
@@ -1425,6 +1803,7 @@ function createDefaultWeekSubgoal(index) {
     type: "Concept",
     importance: "4",
     confidence: "4",
+    status: "not_started",
   };
 }
 
@@ -1461,6 +1840,8 @@ function resetWeekFlowState() {
   weekFlowState.step = "";
   weekFlowState.delayedTestAnswers = {};
   weekFlowState.subgoals = createDefaultWeekSubgoals();
+  weekFlowState.currentSessionIndex = 0;
+  weekFlowState.sessionTimeRemaining = 25 * 60;
 }
 
 function createDefaultSubgoal(index) {
@@ -1567,7 +1948,7 @@ function summarizeWeekProgress() {
 }
 
 function isWeekComplete(weekState) {
-  return weekState.status === "completed" || Boolean(weekState.subgoalsCompleted);
+  return weekState.status === "completed" || Boolean(weekState.sessionsCompleted);
 }
 
 function isWeekUnlocked(weekId) {

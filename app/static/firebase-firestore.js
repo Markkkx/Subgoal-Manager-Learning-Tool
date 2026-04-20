@@ -13,6 +13,7 @@ import {
   setDoc,
 } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
 
+
 import { firebaseConfig, hasFirebaseConfig } from "./firebase-config.js";
 
 let firestoreDb = null;
@@ -112,4 +113,19 @@ export async function saveUserWeek(uid, weekId, payload) {
     },
     { merge: true }
   );
+}
+
+export async function getPostTestQuestions() {
+  const db = requireDb();
+  const snap = await getDocs(collection(db, "post_test_questions"));
+  const questions = [];
+  snap.forEach((d) => questions.push({ id: d.id, ...d.data() }));
+  questions.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  return questions;
+}
+
+export async function savePostTest(uid, answers) {
+  const db = requireDb();
+  const ref = doc(db, "users", uid, "assessments", "post_test");
+  await setDoc(ref, { answers, submittedAt: serverTimestamp() }, { merge: true });
 }

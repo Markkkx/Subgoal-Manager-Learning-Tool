@@ -11,10 +11,10 @@
       <section id="auth-shell" class="auth-shell">
         <div class="auth-card">
           <p class="eyebrow">Research Access</p>
-          <h1 class="auth-title">Sign in to enter the study</h1>
-          <p class="auth-copy">
+          <h1 class="auth-title">Hello!</h1>
+          <!-- <p class="auth-copy">
             Use email and password authentication to access the existing research page.
-          </p>
+          </p> -->
 
           <div class="auth-tabs" role="tablist" aria-label="Authentication tabs">
             <button id="login-tab" class="auth-tab active" type="button">Log In</button>
@@ -106,6 +106,36 @@
             </div>
             <div id="week-card-list" class="week-card-list"></div>
           </section>
+
+          <section class="dashboard-panel post-test-panel">
+            <div class="panel-header">
+              <h2>Overall Post-Test</h2>
+              <span class="panel-tag">Final</span>
+            </div>
+            <p class="post-test-desc">Complete all four weeks before taking the overall post-test.</p>
+            <button id="post-test-button" class="post-test-button" type="button" disabled>
+              Start Post-Test
+            </button>
+          </section>
+        </div>
+      </section>
+
+      <!-- Post-Test Shell -->
+      <section id="post-test-shell" class="post-test-shell hidden">
+        <div class="week-card">
+          <div class="week-header">
+            <div>
+              <p class="eyebrow">Final Assessment</p>
+              <h1 class="onboarding-title">Overall Post-Test</h1>
+              <p class="onboarding-subtitle">Answer all questions below.</p>
+            </div>
+          </div>
+          <div id="post-test-content" class="onboarding-content"></div>
+          <p id="post-test-validation" class="validation-message"></p>
+          <div class="onboarding-actions">
+            <button id="post-test-back" class="secondary-action" type="button">Back to Dashboard</button>
+            <button id="post-test-submit" class="primary-action" type="button">Submit Post-Test</button>
+          </div>
         </div>
       </section>
 
@@ -135,17 +165,34 @@
             <span class="meta-label">Signed in as</span>
             <span id="auth-user-display"></span>
           </div>
-          <button id="logout-button" class="logout-button" type="button">Log Out</button>
+          <div class="topbar-right">
+            <span id="session-indicator" class="session-indicator">Session 1 of 3</span>
+            <div class="countdown-bar-wrap">
+              <div id="countdown-bar" class="countdown-bar"></div>
+              <span id="countdown-label" class="countdown-label">25:00</span>
+            </div>
+            <button id="back-to-dashboard-button" class="back-dashboard-button" type="button">← Dashboard</button>
+            <button id="logout-button" class="logout-button" type="button">Log Out</button>
+          </div>
         </div>
 
-        <div class="layout-grid">
+        <div class="layout-grid" id="layout-grid">
+          <aside class="subgoal-sidebar" id="subgoal-sidebar">
+            <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle subgoals">☰</button>
+            <div id="sidebar-dots" class="sidebar-dots"></div>
+            <div class="sidebar-expanded-content">
+              <p class="eyebrow sidebar-eyebrow">Subgoals</p>
+              <ul id="sidebar-list" class="sidebar-list"></ul>
+            </div>
+          </aside>
+
           <section class="search-shell">
-            <p class="eyebrow">Learning Site Prototype</p>
-            <h1>Browser Search Demo</h1>
+            <p class="eyebrow">Exploratory Learning</p>
+            <!-- <h1>Browser Search Demo</h1>
             <p class="intro">
               This page mimics a familiar web search workflow while logging behavior
               for research.
-            </p>
+            </p> -->
 
             <form id="search-form" class="search-form">
               <label class="sr-only" for="query-input">Search query</label>
@@ -160,7 +207,7 @@
               <button type="submit">Search</button>
             </form>
 
-            <div class="meta-row">
+            <!--<div class="meta-row">
               <div>
                 <span class="meta-label">User ID</span>
                 <span id="user-id-display"></span>
@@ -169,7 +216,7 @@
                 <span class="meta-label">Session ID</span>
                 <span id="session-id-display"></span>
               </div>
-            </div>
+            </div>-->
 
             <p id="status-message" class="status-message"></p>
 
@@ -178,9 +225,7 @@
                 <h2>Search Summary</h2>
                 <span class="panel-tag">Groq</span>
               </div>
-              <p id="summary-text" class="summary-text">
-                Search for a topic to generate a short summary from the returned results.
-              </p>
+              <p id="summary-text" class="summary-text"></p>
             </section>
 
             <section id="results" class="results" aria-live="polite"></section>
@@ -191,9 +236,6 @@
               <h2>Study Chatbot</h2>
               <span class="panel-tag">Groq</span>
             </div>
-            <p class="chat-intro">
-              Ask follow-up questions about your current search topic or general study questions.
-            </p>
 
             <section class="keyword-panel">
               <div class="keyword-header">
@@ -213,18 +255,52 @@
                 id="chat-input"
                 name="message"
                 rows="3"
-                placeholder="Ask the chatbot something..."
+                placeholder="Ask a question..."
                 required
               ></textarea>
               <button type="submit">Send</button>
             </form>
           </aside>
         </div>
+
+        <!-- Micro-Check overlay -->
+        <div id="micro-check-overlay" class="micro-check-overlay hidden">
+          <div class="micro-check-card">
+            <p class="eyebrow">Session Complete</p>
+            <h2 class="micro-check-title">Session Check-in</h2>
+            <p class="micro-check-subtitle">Answer three quick questions before the next session.</p>
+            <form id="micro-check-form" class="micro-check-form">
+              <fieldset class="mc-fieldset">
+                <legend class="mc-legend">1. Which tool did you mainly use in this session?</legend>
+                <label class="mc-option"><input type="radio" name="tool" value="search_engine" required /> Search engine</label>
+                <label class="mc-option"><input type="radio" name="tool" value="conversational_agent" /> Conversational agent</label>
+                <label class="mc-option"><input type="radio" name="tool" value="roughly_equal" /> Roughly equal</label>
+              </fieldset>
+              <fieldset class="mc-fieldset">
+                <legend class="mc-legend">2. What best describes your activity in this session?</legend>
+                <label class="mc-option"><input type="radio" name="activity" value="conceptual" required /> Building conceptual understanding</label>
+                <label class="mc-option"><input type="radio" name="activity" value="evidence" /> Finding evidence or verifying information</label>
+                <label class="mc-option"><input type="radio" name="activity" value="integrating" /> Integrating or summarizing information</label>
+              </fieldset>
+              <fieldset class="mc-fieldset">
+                <legend class="mc-legend">3. How much progress did you make toward this week's learning goal? (1–7)</legend>
+                <div class="mc-scale-row">
+                  <span class="mc-scale-label">1</span>
+                  <input type="range" id="mc-progress" name="progress" min="1" max="7" value="4" step="1" />
+                  <span class="mc-scale-label">7</span>
+                  <span class="mc-scale-value" id="mc-progress-value">4</span>
+                </div>
+              </fieldset>
+              <p id="mc-error" class="mc-error" aria-live="polite"></p>
+              <button type="submit" id="mc-submit" class="mc-submit">Continue to Next Session</button>
+            </form>
+          </div>
+        </div>
       </section>
     </main>
 
     <script>
-      window.FIREBASE_CONFIG = {{ firebase_config | tojson }};
+      window.FIREBASE_CONFIG = {{ firebase_config | tojson | safe }};
     </script>
     <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
   </body>

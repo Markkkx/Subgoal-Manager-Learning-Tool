@@ -70,14 +70,8 @@ def create_app() -> Flask:
         except RuntimeError as exc:
             return jsonify({"error": str(exc)}), 502
 
-        summary = None
         keywords = []
         if chat_service.is_enabled():
-            try:
-                summary = chat_service.summarize_search(query_text, results)
-            except RuntimeError:
-                # Search should still work even if the summary request fails.
-                summary = None
             try:
                 keywords = chat_service.extract_keywords(query_text)
             except RuntimeError:
@@ -89,10 +83,31 @@ def create_app() -> Flask:
             {
                 "query_text": query_text,
                 "results": results,
-                "summary": summary,
                 "keywords": keywords,
             }
         )
+
+    @app.post("/api/tool-switch")
+    def tool_switch():
+        payload = request.get_json(silent=True) or {}
+        required_fields = ["session_id", "previous_tool", "next_tool", "switched_at"]
+        missing_fields = [field for field in required_fields if not payload.get(field)]
+        if missing_fields:
+            return (
+                jsonify({"error": f"Missing required fields: {', '.join(missing_fields)}"}),
+                400,
+            )
+
+        event_logger.log_tool_switch(
+            {
+                "user_id": (payload.get("user_id") or "demo-user").strip(),
+                "session_id": payload["session_id"],
+                "previous_tool": payload["previous_tool"],
+                "next_tool": payload["next_tool"],
+                "switched_at": payload["switched_at"],
+            }
+        )
+        return jsonify({"status": "ok"})
 
     @app.post("/api/click")
     def click():

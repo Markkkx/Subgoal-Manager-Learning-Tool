@@ -1,3 +1,4 @@
+// ── Imports ───────────────────────────────────────────────────────────────────
 import {
   isFirebaseReady,
   loginWithEmail,
@@ -14,10 +15,12 @@ import {
   saveUserWeek,
   getPostTestQuestions,
   savePostTest,
+  saveQuickEvaluation,
 } from "./firebase-firestore.js";
 import { baselineQuizQuestions } from "./onboarding-quiz.js";
 import { delayedTestQuestionsByWeek } from "./delayed-test-questions.js";
 
+// ── DOM References ────────────────────────────────────────────────────────────
 const authShell = document.getElementById("auth-shell");
 const onboardingShell = document.getElementById("onboarding-shell");
 const onboardingTitle = document.getElementById("onboarding-title");
@@ -35,6 +38,7 @@ const dashboardProgressCaption = document.getElementById("dashboard-progress-cap
 const dashboardProgressFill = document.getElementById("dashboard-progress-fill");
 const weekCardList = document.getElementById("week-card-list");
 const dashboardLogoutButton = document.getElementById("dashboard-logout-button");
+// Exploratory session shell (delayed test + subgoal planning)
 const weekShell = document.getElementById("week-shell");
 const weekShellEyebrow = document.getElementById("week-shell-eyebrow");
 const weekShellTitle = document.getElementById("week-shell-title");
@@ -43,6 +47,16 @@ const weekShellContent = document.getElementById("week-shell-content");
 const weekShellValidation = document.getElementById("week-shell-validation");
 const weekShellBack = document.getElementById("week-shell-back");
 const weekShellNext = document.getElementById("week-shell-next");
+// Structured session shell (instructions + placeholder assessment)
+const structuredSessionShell = document.getElementById("structured-session-shell");
+const structuredSessionEyebrow = document.getElementById("structured-session-eyebrow");
+const structuredSessionTitle = document.getElementById("structured-session-title");
+const structuredSessionSubtitle = document.getElementById("structured-session-subtitle");
+const structuredSessionContent = document.getElementById("structured-session-content");
+const structuredSessionValidation = document.getElementById("structured-session-validation");
+const structuredSessionBack = document.getElementById("structured-session-back");
+const structuredSessionNext = document.getElementById("structured-session-next");
+// App shell (main research page)
 const appShell = document.getElementById("app-shell");
 const postTestShell = document.getElementById("post-test-shell");
 const postTestContent = document.getElementById("post-test-content");
@@ -66,12 +80,18 @@ const resultsContainer = document.getElementById("results");
 const statusMessage = document.getElementById("status-message");
 const userIdDisplay = document.getElementById("user-id-display");
 const sessionIdDisplay = document.getElementById("session-id-display");
-const summaryText = document.getElementById("summary-text");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
 const chatMessages = document.getElementById("chat-messages");
 const keywordList = document.getElementById("keyword-list");
+const toolToggleButtons = document.querySelectorAll("[data-tool-tab]");
+const toolPanels = document.querySelectorAll("[data-tool-panel]");
+const quickEvaluationPopup = document.getElementById("quick-evaluation-popup");
+const quickEvaluationQuestion = document.getElementById("quick-evaluation-question");
+const quickEvaluationOptions = document.getElementById("quick-evaluation-options");
+const quickEvaluationDismiss = document.getElementById("quick-evaluation-dismiss");
 
+// ── Global State ──────────────────────────────────────────────────────────────
 let currentUserId = "demo-user";
 const sessionId = crypto.randomUUID();
 let currentQuery = "";
@@ -80,20 +100,19 @@ let pendingReturnContext = null;
 let leftMainPageAt = null;
 let returnLogged = false;
 let authMode = "login";
+let activeTool = "browser";
+let activeEvaluation = null;
+const evaluationQueue = [];
+
 const weekDefinitions = [
   { id: "week1", label: "Week 1" },
   { id: "week2", label: "Week 2" },
   { id: "week3", label: "Week 3" },
   { id: "week4", label: "Week 4" },
 ];
-const onboardingSteps = [
-  "welcome",
-  "consent",
-  "demographics",
-  "quiz",
-  "subgoals",
-  "complete",
-];
+
+const onboardingSteps = ["welcome", "consent", "demographics", "quiz", "subgoals", "complete"];
+
 const onboardingState = {
   step: "welcome",
   completed: false,
@@ -109,25 +128,70 @@ const onboardingState = {
   quizAnswers: {},
   subgoals: createDefaultSubgoals(),
 };
+
 const dashboardState = {
   assignedCondition: "Condition not assigned yet",
   currentWeek: "week1",
+  currentSession: "structured", // "structured" | "exploratory"
   weeks: createDefaultWeeks(),
 };
+
+// State for the exploratory session pre-flow (delayed test + subgoal planning)
 const weekFlowState = {
   weekId: "",
-  step: "",
+  step: "",           // "delayedTest" | "subgoals"
   delayedTestAnswers: {},
   subgoals: createDefaultWeekSubgoals(),
   currentSessionIndex: 0,
   sessionTimeRemaining: 25 * 60,
 };
 
+// State for the structured session flow
+const structuredSessionState = {
+  weekId: "",
+  step: "instructions", // "instructions" | "assessment"
+  materialsChecked: false,
+  assessmentAnswers: {},
+};
+
+// Placeholder structured assessment questions.
+// Replace prompts and options with real content when ready.
+const STRUCTURED_ASSESSMENT_QUESTIONS = [
+  {
+    id: "sa_q1",
+    type: "singleChoice",
+    prompt: "[Placeholder] Which of the following best describes the key concept from this week's materials?",
+    options: [
+      "Option A — Placeholder",
+      "Option B — Placeholder",
+      "Option C — Placeholder",
+      "Option D — Placeholder",
+    ],
+  },
+  {
+    id: "sa_q2",
+    type: "shortAnswer",
+    prompt: "[Placeholder] In 2–3 sentences, summarize the main idea from the materials you watched this week.",
+  },
+  {
+    id: "sa_q3",
+    type: "singleChoice",
+    prompt: "[Placeholder] Which approach is most aligned with the learning objectives for this week?",
+    options: [
+      "Approach A — Placeholder",
+      "Approach B — Placeholder",
+      "Approach C — Placeholder",
+      "Approach D — Placeholder",
+    ],
+  },
+];
+
 if (sessionIdDisplay) {
   sessionIdDisplay.textContent = sessionId;
 }
 initializeInterface();
 
+// ── Search ────────────────────────────────────────────────────────────────────
 searchForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
@@ -140,16 +204,11 @@ searchForm.addEventListener("submit", async (event) => {
   currentQuery = queryText;
   statusMessage.textContent = "Searching...";
   resultsContainer.innerHTML = "";
-  if (summaryText) {
-    summaryText.textContent = "Generating a search summary...";
-  }
 
   try {
     const response = await fetch("/api/search", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         user_id: currentUserId,
         session_id: sessionId,
@@ -158,29 +217,37 @@ searchForm.addEventListener("submit", async (event) => {
     });
 
     const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || "Search request failed.");
-    }
+    if (!response.ok) throw new Error(data.error || "Search request failed.");
 
     renderResults(data.results);
-    renderSummary(data.summary);
     renderKeywords(data.keywords || []);
     statusMessage.textContent = `Showing ${data.results.length} result(s) for "${queryText}".`;
+    enqueueQuickEvaluation({
+      eventType: "browser_search_results_loaded",
+      tool: "browser",
+      question: "How helpful were these results?",
+      responseKey: "rating",
+      options: createRatingOptions(),
+    });
   } catch (error) {
     renderEmptyState("The search could not be completed.");
-    renderSummary(null);
     renderKeywords([]);
     statusMessage.textContent = error.message;
   }
 });
 
+toolToggleButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setActiveTool(button.dataset.toolTab);
+  });
+});
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
 chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   const message = chatInput.value.trim();
-  if (!message) {
-    return;
-  }
+  if (!message) return;
 
   appendChatMessage("user", message);
   chatHistory.push({ role: "user", content: message });
@@ -189,9 +256,7 @@ chatForm.addEventListener("submit", async (event) => {
   try {
     const response = await fetch("/api/chat", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages: chatHistory,
         current_query: currentQuery,
@@ -201,44 +266,44 @@ chatForm.addEventListener("submit", async (event) => {
     });
 
     const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || "Chat request failed.");
-    }
+    if (!response.ok) throw new Error(data.error || "Chat request failed.");
 
     appendChatMessage("assistant", data.reply);
     chatHistory.push({ role: "assistant", content: data.reply });
+    enqueueQuickEvaluation({
+      eventType: "chatbot_answer_shown",
+      tool: "ai_chat",
+      question: "How useful was this answer?",
+      responseKey: "rating",
+      options: createRatingOptions(),
+    });
   } catch (error) {
     appendChatMessage("assistant", `Chat error: ${error.message}`);
   }
 });
 
+// ── Click / Return Tracking ───────────────────────────────────────────────────
 document.addEventListener("visibilitychange", async () => {
-  if (!pendingReturnContext) {
-    return;
-  }
-
+  if (!pendingReturnContext) return;
   if (document.hidden) {
     leftMainPageAt = new Date();
     returnLogged = false;
     return;
   }
-
-  if (!document.hidden) {
-    await tryLogReturnEvent();
-  }
+  if (!document.hidden) await tryLogReturnEvent();
 });
 
 window.addEventListener("focus", async () => {
   await tryLogReturnEvent();
 });
 
-loginTab.addEventListener("click", () => {
-  setAuthMode("login");
-});
+if (quickEvaluationDismiss) {
+  quickEvaluationDismiss.addEventListener("click", dismissQuickEvaluation);
+}
 
-signupTab.addEventListener("click", () => {
-  setAuthMode("signup");
-});
+// ── Auth UI ───────────────────────────────────────────────────────────────────
+loginTab.addEventListener("click", () => setAuthMode("login"));
+signupTab.addEventListener("click", () => setAuthMode("signup"));
 
 authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -259,32 +324,20 @@ authForm.addEventListener("submit", async (event) => {
     } else {
       credential = await signUpWithEmail(email, password);
     }
-
-    // Do the UI transition immediately after a successful auth call instead of
-    // waiting only for the auth-state listener.
-    if (credential && credential.user) {
-      handleAuthenticatedUser(credential.user);
-    }
+    if (credential && credential.user) handleAuthenticatedUser(credential.user);
   } catch (error) {
     console.error("Auth error:", error);
     authError.textContent = mapAuthError(error);
   }
 });
 
-logoutButton.addEventListener("click", async () => {
-  await logoutUser();
-});
+logoutButton.addEventListener("click", async () => { await logoutUser(); });
+dashboardLogoutButton.addEventListener("click", async () => { await logoutUser(); });
 
-dashboardLogoutButton.addEventListener("click", async () => {
-  await logoutUser();
-});
-
+// ── Onboarding Navigation ─────────────────────────────────────────────────────
 onboardingBack.addEventListener("click", async () => {
   const currentIndex = onboardingSteps.indexOf(onboardingState.step);
-  if (currentIndex <= 0) {
-    return;
-  }
-
+  if (currentIndex <= 0) return;
   setOnboardingStep(onboardingSteps[currentIndex - 1]);
   await persistOnboardingProgress();
 });
@@ -318,6 +371,7 @@ onboardingNext.addEventListener("click", async () => {
   await persistOnboardingProgress();
 });
 
+// ── Exploratory Session Shell Navigation ─────────────────────────────────────
 weekShellBack.addEventListener("click", async () => {
   await loadDashboardState();
   showDashboardView();
@@ -339,17 +393,24 @@ weekShellNext.addEventListener("click", async () => {
     return;
   }
 
+  // Subgoal step done — enter main research page
   const currentWeek = dashboardState.weeks[weekFlowState.weekId];
   currentWeek.subgoalsCompleted = true;
   currentWeek.status = "in_progress";
+  currentWeek.exploratoryStatus = "in_progress";
   currentWeek.subgoals = weekFlowState.subgoals;
-  dashboardState.currentWeek = getNextAvailableWeekId() || weekFlowState.weekId;
+  currentWeek.exploratoryStartedAt = currentWeek.exploratoryStartedAt || new Date().toISOString();
+  dashboardState.currentWeek = weekFlowState.weekId;
+  dashboardState.currentSession = "exploratory";
 
   await saveUserStudyProfile(currentUserId, {
     currentWeek: dashboardState.currentWeek,
+    currentSession: dashboardState.currentSession,
     assignedCondition: dashboardState.assignedCondition,
     weekProgress: summarizeWeekProgress(),
   });
+  await saveUserWeek(currentUserId, weekFlowState.weekId, currentWeek);
+
   const savedSubgoals = weekFlowState.subgoals;
   const savedWeekId = weekFlowState.weekId;
   resetWeekFlowState();
@@ -360,15 +421,73 @@ weekShellNext.addEventListener("click", async () => {
   showAppView();
 });
 
+// ── Structured Session Shell Navigation ───────────────────────────────────────
+structuredSessionBack.addEventListener("click", async () => {
+  // Save the current step so the user can resume if they come back
+  if (structuredSessionState.weekId) {
+    await saveUserWeek(currentUserId, structuredSessionState.weekId, {
+      ...dashboardState.weeks[structuredSessionState.weekId],
+      structuredStep: structuredSessionState.step,
+    });
+  }
+  await loadDashboardState();
+  showDashboardView();
+});
+
+structuredSessionNext.addEventListener("click", async () => {
+  structuredSessionValidation.textContent = "";
+  const error = readAndValidateStructuredStep();
+  if (error) {
+    structuredSessionValidation.textContent = error;
+    return;
+  }
+
+  if (structuredSessionState.step === "instructions") {
+    // Advance to assessment and save progress for resume
+    structuredSessionState.step = "assessment";
+    dashboardState.weeks[structuredSessionState.weekId] = {
+      ...dashboardState.weeks[structuredSessionState.weekId],
+      structuredStatus: "in_progress",
+      structuredStep: "assessment",
+    };
+    await saveUserWeek(currentUserId, structuredSessionState.weekId, dashboardState.weeks[structuredSessionState.weekId]);
+    renderStructuredSessionStep();
+    return;
+  }
+
+  if (structuredSessionState.step === "assessment") {
+    // Save answers alongside the week doc (avoids sub-collection permission issues)
+    const weekId = structuredSessionState.weekId;
+    dashboardState.weeks[weekId] = {
+      ...dashboardState.weeks[weekId],
+      structuredStatus: "completed",
+      structuredStep: "completed",
+      structuredCompletedAt: new Date().toISOString(),
+      structuredAssessmentAnswers: structuredSessionState.assessmentAnswers,
+    };
+    await saveUserWeek(currentUserId, weekId, dashboardState.weeks[weekId]);
+
+    // Reset state and go back to dashboard
+    structuredSessionState.weekId = "";
+    structuredSessionState.step = "instructions";
+    structuredSessionState.materialsChecked = false;
+    structuredSessionState.assessmentAnswers = {};
+
+    await loadDashboardState();
+    showDashboardView();
+  }
+});
+
+// ── Auth State Listener ───────────────────────────────────────────────────────
 onAuthReady((user) => {
   if (!user) {
     showAuthView();
     return;
   }
-
   void handleAuthenticatedUser(user);
 });
 
+// ── Initialization ────────────────────────────────────────────────────────────
 function initializeInterface() {
   renderEmptyState("Submit a query to see results inside this page.");
   appendChatMessage(
@@ -396,21 +515,754 @@ function setAuthMode(mode) {
   authError.textContent = "";
 }
 
+// ── View Switching ────────────────────────────────────────────────────────────
+function hideAllShells() {
+  authShell.classList.add("hidden");
+  onboardingShell.classList.add("hidden");
+  dashboardShell.classList.add("hidden");
+  weekShell.classList.add("hidden");
+  structuredSessionShell.classList.add("hidden");
+  appShell.classList.add("hidden");
+  postTestShell.classList.add("hidden");
+}
+
 function showAuthView() {
   resetOnboardingState();
   resetDashboardState();
   resetWeekFlowState();
+  hideAllShells();
   authShell.classList.remove("hidden");
-  onboardingShell.classList.add("hidden");
-  dashboardShell.classList.add("hidden");
-  weekShell.classList.add("hidden");
-  appShell.classList.add("hidden");
   authPassword.value = "";
   authEmail.value = "";
 }
 
-// ── Subgoal Sidebar ──────────────────────────────────────────────────────────
+function showOnboardingView() {
+  hideAllShells();
+  onboardingShell.classList.remove("hidden");
+}
 
+function showDashboardView() {
+  hideAllShells();
+  dashboardShell.classList.remove("hidden");
+  renderDashboard();
+}
+
+function showWeekShellView() {
+  hideAllShells();
+  weekShell.classList.remove("hidden");
+}
+
+function showStructuredSessionView() {
+  hideAllShells();
+  structuredSessionShell.classList.remove("hidden");
+}
+
+function showAppView() {
+  hideAllShells();
+  appShell.classList.remove("hidden");
+  startCountdown(weekFlowState.sessionTimeRemaining);
+  renderSubgoalSidebar();
+  renderSessionIndicator();
+}
+
+function showPostTestView() {
+  hideAllShells();
+  postTestShell.classList.remove("hidden");
+}
+
+// ── Auth Handler ──────────────────────────────────────────────────────────────
+async function handleAuthenticatedUser(user) {
+  resetOnboardingState();
+  resetDashboardState();
+  resetWeekFlowState();
+  currentUserId = user.uid;
+  if (userIdDisplay) userIdDisplay.textContent = currentUserId;
+  authUserDisplay.textContent = user.email || user.uid;
+  authError.textContent = "";
+
+  try {
+    const savedData = await getUserOnboarding(user.uid);
+    mergeOnboardingState(savedData.profile || {}, savedData.subgoals || {});
+  } catch (error) {
+    console.error("Onboarding load error:", error);
+  }
+
+  if (onboardingState.completed) {
+    await loadDashboardState();
+    showDashboardView();
+    return;
+  }
+
+  showOnboardingView();
+  renderOnboardingStep();
+}
+
+// ── Dashboard Data ────────────────────────────────────────────────────────────
+async function loadDashboardState() {
+  try {
+    const [onboardingData, weekData] = await Promise.all([
+      getUserOnboarding(currentUserId),
+      getUserWeekProgress(currentUserId),
+    ]);
+
+    dashboardState.assignedCondition =
+      onboardingData.profile.assignedCondition || "Condition not assigned yet";
+    dashboardState.currentWeek = onboardingData.profile.currentWeek || inferCurrentWeek(weekData);
+    dashboardState.currentSession = onboardingData.profile.currentSession || "structured";
+    dashboardState.weeks = createDefaultWeeks();
+
+    weekDefinitions.forEach((week) => {
+      dashboardState.weeks[week.id] = {
+        ...dashboardState.weeks[week.id],
+        ...(weekData[week.id] || {}),
+      };
+    });
+  } catch (error) {
+    console.error("Dashboard load error:", error);
+    dashboardState.assignedCondition = "Condition not assigned yet";
+    dashboardState.currentWeek = "week1";
+    dashboardState.weeks = createDefaultWeeks();
+  }
+}
+
+// ── Dashboard Rendering ───────────────────────────────────────────────────────
+function renderDashboard() {
+  const completedWeeks = countCompletedWeeks();
+  const allDone = completedWeeks === weekDefinitions.length;
+
+  dashboardUserName.textContent = authUserDisplay.textContent || currentUserId;
+  dashboardProgressLabel.textContent = `${completedWeeks} of ${weekDefinitions.length} weeks completed`;
+  dashboardProgressCaption.textContent = allDone
+    ? "All study weeks are completed"
+    : `Next: ${getNextSessionDescription()}`;
+  dashboardProgressFill.style.width = `${(completedWeeks / weekDefinitions.length) * 100}%`;
+
+  // Each week renders as a labeled group containing two session cards
+  weekCardList.innerHTML = weekDefinitions
+    .map((week) => {
+      const weekState = dashboardState.weeks[week.id];
+      const sAction = getStructuredSessionAction(week.id, weekState);
+      const eAction = getExploratorySessionAction(week.id, weekState);
+
+      return `
+        <div class="week-group">
+          <p class="week-group-label">${escapeHtml(week.label)}</p>
+          <div class="session-card-row">
+            <article class="session-entry-card">
+              <span class="session-status-badge ${sAction.statusClass}">${escapeHtml(sAction.statusLabel)}</span>
+              <h4>Structured Session</h4>
+              <p class="session-entry-meta">${escapeHtml(sAction.description)}</p>
+              <button
+                class="session-entry-action ${sAction.completed ? "completed" : ""} ${sAction.locked ? "locked" : ""}"
+                type="button"
+                data-structured-action="${escapeHtml(week.id)}"
+                ${sAction.completed || sAction.locked ? "disabled" : ""}
+              >${escapeHtml(sAction.buttonLabel)}</button>
+            </article>
+
+            <article class="session-entry-card">
+              <span class="session-status-badge ${eAction.statusClass}">${escapeHtml(eAction.statusLabel)}</span>
+              <h4>Exploratory Session</h4>
+              <p class="session-entry-meta">${escapeHtml(eAction.description)}</p>
+              <button
+                class="session-entry-action ${eAction.completed ? "completed" : ""} ${eAction.locked ? "locked" : ""}"
+                type="button"
+                data-exploratory-action="${escapeHtml(week.id)}"
+                ${eAction.completed || eAction.locked ? "disabled" : ""}
+              >${escapeHtml(eAction.buttonLabel)}</button>
+            </article>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  // Attach click handlers after innerHTML is set
+  document.querySelectorAll("[data-structured-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const weekId = button.getAttribute("data-structured-action");
+      await openStructuredSession(weekId);
+    });
+  });
+
+  document.querySelectorAll("[data-exploratory-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const weekId = button.getAttribute("data-exploratory-action");
+      await openExploratorySession(weekId);
+    });
+  });
+
+  postTestButton.disabled = !allDone;
+  postTestButton.textContent = allDone ? "Start Post-Test" : "Complete all 4 weeks to unlock";
+  const desc = postTestButton.previousElementSibling;
+  if (desc) {
+    desc.textContent = allDone
+      ? "All weeks complete. You may now take the overall post-test."
+      : "Complete all four weeks before taking the overall post-test.";
+  }
+}
+
+// ── Session Action Descriptors ────────────────────────────────────────────────
+
+function getStructuredSessionAction(weekId, weekState) {
+  const weekUnlocked = isWeekUnlocked(weekId);
+  const structuredStatus = weekState.structuredStatus || "not_started";
+
+  if (!weekUnlocked) {
+    const prevIdx = weekDefinitions.findIndex((w) => w.id === weekId) - 1;
+    const prevLabel = formatWeekLabel(weekDefinitions[prevIdx].id);
+    return {
+      statusLabel: "Locked",
+      statusClass: "status-locked",
+      buttonLabel: "Locked",
+      description: `Complete ${prevLabel} before this becomes available.`,
+      completed: false,
+      locked: true,
+    };
+  }
+
+  if (structuredStatus === "completed") {
+    return {
+      statusLabel: "Completed",
+      statusClass: "status-completed",
+      buttonLabel: "Completed",
+      description: "You have completed this week's structured session.",
+      completed: true,
+      locked: false,
+    };
+  }
+
+  if (structuredStatus === "in_progress") {
+    return {
+      statusLabel: "In Progress",
+      statusClass: "status-in-progress",
+      buttonLabel: "Resume Structured Session",
+      description: "Continue where you left off in the structured session.",
+      completed: false,
+      locked: false,
+    };
+  }
+
+  return {
+    statusLabel: "Not Started",
+    statusClass: "status-not-started",
+    buttonLabel: "Start Structured Session",
+    description: "Watch the assigned lecture materials, then complete the assessment.",
+    completed: false,
+    locked: false,
+  };
+}
+
+function getExploratorySessionAction(weekId, weekState) {
+  const weekUnlocked = isWeekUnlocked(weekId);
+  const structuredDone = weekState.structuredStatus === "completed";
+  const exploratoryStatus = weekState.exploratoryStatus || "not_started";
+
+  // Locked if the week itself is locked or structured session not yet done
+  if (!weekUnlocked || !structuredDone) {
+    return {
+      statusLabel: "Locked",
+      statusClass: "status-locked",
+      buttonLabel: "Locked",
+      description: structuredDone
+        ? `Complete ${formatWeekLabel(weekDefinitions[weekDefinitions.findIndex((w) => w.id === weekId) - 1]?.id)} first.`
+        : "Complete the Structured Session for this week first.",
+      completed: false,
+      locked: true,
+    };
+  }
+
+  if (exploratoryStatus === "completed") {
+    return {
+      statusLabel: "Completed",
+      statusClass: "status-completed",
+      buttonLabel: "Completed",
+      description: "You have completed this week's exploratory session.",
+      completed: true,
+      locked: false,
+    };
+  }
+
+  if (exploratoryStatus === "in_progress") {
+    return {
+      statusLabel: "In Progress",
+      statusClass: "status-in-progress",
+      buttonLabel: "Resume Exploratory Session",
+      description: "Continue where you left off in the research page.",
+      completed: false,
+      locked: false,
+    };
+  }
+
+  return {
+    statusLabel: "Not Started",
+    statusClass: "status-not-started",
+    buttonLabel: "Start Exploratory Session",
+    description:
+      weekId === "week1"
+        ? "Set your sub-goals, then begin the research session."
+        : "Start with a short delayed test, then set sub-goals and begin research.",
+    completed: false,
+    locked: false,
+  };
+}
+
+// ── Post-Test ─────────────────────────────────────────────────────────────────
+postTestButton.addEventListener("click", async () => {
+  showPostTestView();
+  postTestValidation.textContent = "";
+  postTestContent.innerHTML = '<p style="color:var(--muted)">Loading questions…</p>';
+  try {
+    const questions = await getPostTestQuestions();
+    renderPostTestForm(questions);
+  } catch {
+    postTestContent.innerHTML =
+      '<p style="color:#e53e3e">Failed to load questions. Please try again.</p>';
+  }
+});
+
+postTestBack.addEventListener("click", () => { showDashboardView(); });
+
+postTestSubmit.addEventListener("click", async () => {
+  postTestValidation.textContent = "";
+  const inputs = postTestContent.querySelectorAll("input, textarea, select");
+  const answers = {};
+  let allAnswered = true;
+
+  inputs.forEach((input) => {
+    if (input.type === "radio") {
+      if (input.checked) answers[input.name] = input.value;
+    } else {
+      answers[input.name] = input.value.trim();
+      if (!input.value.trim()) allAnswered = false;
+    }
+  });
+
+  const radioNames = [
+    ...new Set([...postTestContent.querySelectorAll("input[type=radio]")].map((r) => r.name)),
+  ];
+  radioNames.forEach((name) => { if (!answers[name]) allAnswered = false; });
+
+  if (!allAnswered) {
+    postTestValidation.textContent = "Please answer all questions before submitting.";
+    return;
+  }
+
+  postTestSubmit.disabled = true;
+  postTestSubmit.textContent = "Submitting…";
+  try {
+    await savePostTest(currentUserId, answers);
+    postTestContent.innerHTML =
+      '<p style="font-weight:700;color:var(--accent-dark)">Post-test submitted. Thank you!</p>';
+    postTestValidation.textContent = "";
+    postTestSubmit.classList.add("hidden");
+  } catch {
+    postTestValidation.textContent = "Submission failed. Please try again.";
+    postTestSubmit.disabled = false;
+    postTestSubmit.textContent = "Submit Post-Test";
+  }
+});
+
+function renderPostTestForm(questions) {
+  if (!questions.length) {
+    postTestContent.innerHTML = '<p style="color:var(--muted)">No questions available yet.</p>';
+    return;
+  }
+
+  postTestContent.innerHTML = questions
+    .map((q, i) => {
+      const num = i + 1;
+      if (q.type === "multiple_choice" && Array.isArray(q.options)) {
+        return `
+          <div class="quiz-question-card">
+            <p class="quiz-question-text"><strong>${num}.</strong> ${escapeHtml(q.text)}</p>
+            <div class="quiz-options">
+              ${q.options
+                .map(
+                  (opt) => `
+                <label class="quiz-option-label">
+                  <input type="radio" name="q_${q.id}" value="${escapeHtml(opt)}" required />
+                  ${escapeHtml(opt)}
+                </label>`
+                )
+                .join("")}
+            </div>
+          </div>`;
+      }
+      if (q.type === "short_answer") {
+        return `
+          <div class="quiz-question-card">
+            <p class="quiz-question-text"><strong>${num}.</strong> ${escapeHtml(q.text)}</p>
+            <textarea name="q_${q.id}" rows="3" class="quiz-textarea" placeholder="Your answer…"></textarea>
+          </div>`;
+      }
+      return "";
+    })
+    .join("");
+}
+
+// ── Structured Session ────────────────────────────────────────────────────────
+
+// Entry point: open (or resume) the structured session for a given week.
+async function openStructuredSession(weekId) {
+  const weekState = dashboardState.weeks[weekId];
+
+  if (!isWeekUnlocked(weekId)) return;
+  if (weekState.structuredStatus === "completed") return;
+
+  structuredSessionState.weekId = weekId;
+  structuredSessionState.materialsChecked = false;
+  structuredSessionState.assessmentAnswers = {};
+
+  // Resume at the correct step if the user left mid-way
+  if (weekState.structuredStatus === "in_progress" && weekState.structuredStep === "assessment") {
+    structuredSessionState.step = "assessment";
+  } else {
+    structuredSessionState.step = "instructions";
+  }
+
+  // Persist in_progress status immediately
+  dashboardState.weeks[weekId] = {
+    ...weekState,
+    structuredStatus: "in_progress",
+    structuredStep: structuredSessionState.step,
+  };
+  await saveUserWeek(currentUserId, weekId, dashboardState.weeks[weekId]);
+
+  showStructuredSessionView();
+  renderStructuredSessionStep();
+}
+
+// Render the current step of the structured session.
+function renderStructuredSessionStep() {
+  const weekLabel = formatWeekLabel(structuredSessionState.weekId);
+  structuredSessionEyebrow.textContent = `${weekLabel} · Structured Session`;
+  structuredSessionValidation.textContent = "";
+
+  if (structuredSessionState.step === "instructions") {
+    structuredSessionTitle.textContent = "Watch the Learning Materials";
+    structuredSessionSubtitle.textContent =
+      "Complete the assigned materials before taking the assessment.";
+    structuredSessionNext.textContent = "Continue to Assessment";
+
+    structuredSessionContent.innerHTML = `
+      <section class="onboarding-section">
+        <div class="onboarding-panel">
+          <p class="onboarding-copy">
+            Please watch the assigned lecture and tutorial materials for
+            <strong>${escapeHtml(weekLabel)}</strong> before continuing.
+            These materials have been prepared for you and are available outside this website.
+          </p>
+          <p class="onboarding-copy">
+            After you finish watching, check the box below and click
+            <strong>Continue to Assessment</strong>.
+          </p>
+        </div>
+        <label class="consent-check">
+          <input id="materials-completed-check" type="checkbox"
+            ${structuredSessionState.materialsChecked ? "checked" : ""} />
+          <span>I have completed the assigned learning materials for this week.</span>
+        </label>
+      </section>
+    `;
+    return;
+  }
+
+  if (structuredSessionState.step === "assessment") {
+    structuredSessionTitle.textContent = "Structured Session Assessment";
+    structuredSessionSubtitle.textContent =
+      "Answer all questions based on the materials you watched.";
+    structuredSessionNext.textContent = "Submit Assessment";
+
+    structuredSessionContent.innerHTML = `
+      <section class="onboarding-section">
+        <p class="inline-note">
+          [Placeholder] Real assessment questions for ${escapeHtml(weekLabel)} will be added here before the study begins.
+        </p>
+        <div class="quiz-list">
+          ${STRUCTURED_ASSESSMENT_QUESTIONS.map((q, i) =>
+            renderStructuredQuestionCard(q, i)
+          ).join("")}
+        </div>
+      </section>
+    `;
+  }
+}
+
+// Render one question card for the structured assessment (supports singleChoice + shortAnswer).
+function renderStructuredQuestionCard(question, index) {
+  if (question.type === "shortAnswer") {
+    return `
+      <article class="question-card">
+        <h3>Question ${index + 1}</h3>
+        <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
+        <div class="field-group full-width">
+          <label for="${question.id}">Short answer</label>
+          <textarea id="${question.id}" placeholder="Type your response here…">${escapeHtml(
+            structuredSessionState.assessmentAnswers[question.id] || ""
+          )}</textarea>
+        </div>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="question-card">
+      <h3>Question ${index + 1}</h3>
+      <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
+      <div class="option-list">
+        ${question.options
+          .map(
+            (opt) => `
+          <label>
+            <input
+              type="radio"
+              name="${question.id}"
+              value="${escapeHtml(opt)}"
+              ${structuredSessionState.assessmentAnswers[question.id] === opt ? "checked" : ""}
+            />
+            ${escapeHtml(opt)}
+          </label>
+        `
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
+// Validate the current structured session step and collect answers into state.
+function readAndValidateStructuredStep() {
+  if (structuredSessionState.step === "instructions") {
+    const checkbox = document.getElementById("materials-completed-check");
+    if (!checkbox || !checkbox.checked) {
+      return "Please confirm you have completed the assigned learning materials before continuing.";
+    }
+    structuredSessionState.materialsChecked = true;
+    return "";
+  }
+
+  if (structuredSessionState.step === "assessment") {
+    const answers = {};
+    for (const q of STRUCTURED_ASSESSMENT_QUESTIONS) {
+      if (q.type === "shortAnswer") {
+        const el = document.getElementById(q.id);
+        const val = el ? el.value.trim() : "";
+        if (!val) return "Please answer all assessment questions before submitting.";
+        answers[q.id] = val;
+      } else {
+        const selected = document.querySelector(`input[name="${q.id}"]:checked`);
+        if (!selected) return "Please answer all assessment questions before submitting.";
+        answers[q.id] = selected.value;
+      }
+    }
+    structuredSessionState.assessmentAnswers = answers;
+    return "";
+  }
+
+  return "";
+}
+
+// ── Exploratory Session ───────────────────────────────────────────────────────
+
+// Entry point: open (or resume) the exploratory session for a given week.
+// For weeks 2-4 this shows the delayed test first, then subgoal planning.
+// For week 1 it goes straight to subgoal planning.
+async function openExploratorySession(weekId) {
+  const weekState = dashboardState.weeks[weekId];
+
+  // Guard: require week unlocked and structured session completed first
+  if (!isWeekUnlocked(weekId)) return;
+  if (weekState.structuredStatus !== "completed") return;
+  if (weekState.exploratoryStatus === "completed") return;
+
+  // Resume: if subgoals already completed and exploratory is in_progress → skip to app-shell
+  if (weekState.subgoalsCompleted && weekState.exploratoryStatus === "in_progress") {
+    weekFlowState.weekId = weekId;
+    weekFlowState.subgoals =
+      weekState.subgoals && weekState.subgoals.length === 3
+        ? weekState.subgoals
+        : createDefaultWeekSubgoals();
+    weekFlowState.currentSessionIndex = weekState.currentSessionIndex ?? 0;
+    weekFlowState.sessionTimeRemaining = weekState.sessionTimeRemaining ?? 25 * 60;
+    dashboardState.currentWeek = weekId;
+    dashboardState.currentSession = "exploratory";
+
+    await saveUserStudyProfile(currentUserId, {
+      currentWeek: dashboardState.currentWeek,
+      currentSession: dashboardState.currentSession,
+      assignedCondition: dashboardState.assignedCondition,
+      weekProgress: summarizeWeekProgress(),
+    });
+    showAppView();
+    return;
+  }
+
+  weekFlowState.weekId = weekId;
+  weekFlowState.delayedTestAnswers = weekState.delayedTestAnswers || {};
+  weekFlowState.subgoals =
+    weekState.subgoals && weekState.subgoals.length === 3
+      ? weekState.subgoals
+      : createDefaultWeekSubgoals();
+
+  // Week 1 skips the delayed test; later weeks skip it only if already completed
+  weekFlowState.step =
+    weekId === "week1" || weekState.delayedTestCompleted ? "subgoals" : "delayedTest";
+
+  dashboardState.weeks[weekId] = {
+    ...weekState,
+    exploratoryStatus: "in_progress",
+    exploratoryStartedAt: weekState.exploratoryStartedAt || new Date().toISOString(),
+  };
+  dashboardState.currentWeek = weekId;
+  dashboardState.currentSession = "exploratory";
+
+  await saveUserWeek(currentUserId, weekId, dashboardState.weeks[weekId]);
+  await saveUserStudyProfile(currentUserId, {
+    currentWeek: dashboardState.currentWeek,
+    currentSession: dashboardState.currentSession,
+    assignedCondition: dashboardState.assignedCondition,
+    weekProgress: summarizeWeekProgress(),
+  });
+
+  showWeekShellView();
+  renderWeekFlowStep();
+}
+
+// Render the delayed test or subgoal planning step.
+function renderWeekFlowStep() {
+  const weekLabel = formatWeekLabel(weekFlowState.weekId);
+  weekShellEyebrow.textContent = `${weekLabel} · Exploratory Session`;
+  weekShellValidation.textContent = "";
+
+  if (weekFlowState.step === "delayedTest") {
+    weekShellTitle.textContent = "Short Delayed Test";
+    weekShellSubtitle.textContent = " ";
+    weekShellNext.textContent = "Submit Delayed Test";
+    weekShellContent.innerHTML = `
+      <section class="onboarding-section">
+        <p class="inline-note">
+          ${escapeHtml(weekLabel)} begins with a short delayed test before sub-goal planning.
+        </p>
+        <div class="quiz-list">
+          ${getDelayedTestQuestions(weekFlowState.weekId)
+            .map((question, index) => renderDelayedQuestionCard(question, index))
+            .join("")}
+        </div>
+      </section>
+    `;
+    return;
+  }
+
+  // Subgoal planning step
+  weekShellTitle.textContent = "Sub-goal Planning";
+  weekShellSubtitle.textContent = "";
+  weekShellNext.textContent = "Save Sub-goals and Continue";
+  weekShellContent.innerHTML = `
+    <section class="onboarding-section">
+      <div class="subgoal-list">
+        ${weekFlowState.subgoals
+          .map(
+            (goal, index) => `
+              <article class="subgoal-card">
+                <div class="form-grid">
+                  <div class="field-group full-width">
+                    <label for="weekly-goal-question-${index}">Sub-goal question</label>
+                    <input
+                      id="weekly-goal-question-${index}"
+                      type="text"
+                      value="${escapeHtml(goal.question)}"
+                      placeholder="What do you want to focus on this week?"
+                    />
+                  </div>
+                  <div class="field-group">
+                    <label for="weekly-goal-type-${index}">Goal type</label>
+                    <select id="weekly-goal-type-${index}">
+                      ${renderSelectOptions(
+                        ["Concept", "Evidence", "Comparison", "Application"],
+                        goal.type
+                      )}
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="weekly-goal-importance-${index}">Importance</label>
+                    <input
+                      id="weekly-goal-importance-${index}"
+                      type="range"
+                      min="1"
+                      max="7"
+                      value="${escapeHtml(goal.importance)}"
+                    />
+                    <span class="scale-value">Current value: <strong id="weekly-goal-importance-value-${index}">${escapeHtml(goal.importance)}</strong> / 7</span>
+                  </div>
+                  <div class="field-group full-width">
+                    <label for="weekly-goal-confidence-${index}">Confidence</label>
+                    <input
+                      id="weekly-goal-confidence-${index}"
+                      type="range"
+                      min="1"
+                      max="7"
+                      value="${escapeHtml(goal.confidence)}"
+                    />
+                    <span class="scale-value">Current value: <strong id="weekly-goal-confidence-value-${index}">${escapeHtml(goal.confidence)}</strong> / 7</span>
+                  </div>
+                </div>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+
+  weekFlowState.subgoals.forEach((_, index) => {
+    attachScaleMirror(`weekly-goal-importance-${index}`, `weekly-goal-importance-value-${index}`);
+    attachScaleMirror(`weekly-goal-confidence-${index}`, `weekly-goal-confidence-value-${index}`);
+  });
+}
+
+function renderDelayedQuestionCard(question, index) {
+  if (question.type === "shortAnswer") {
+    return `
+      <article class="question-card">
+        <h3>Question ${index + 1}</h3>
+        <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
+        <div class="field-group full-width">
+          <label for="${question.id}">Short answer</label>
+          <textarea id="${question.id}" placeholder="Type your response here...">${escapeHtml(
+            weekFlowState.delayedTestAnswers[question.id] || ""
+          )}</textarea>
+        </div>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="question-card">
+      <h3>Question ${index + 1}</h3>
+      <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
+      <div class="option-list">
+        ${question.options
+          .map(
+            (option) => `
+              <label>
+                <input
+                  type="radio"
+                  name="${question.id}"
+                  value="${escapeHtml(option)}"
+                  ${weekFlowState.delayedTestAnswers[question.id] === option ? "checked" : ""}
+                />
+                ${escapeHtml(option)}
+              </label>
+            `
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
+// ── Subgoal Sidebar ───────────────────────────────────────────────────────────
 let sidebarExpanded = false;
 
 function renderSubgoalSidebar() {
@@ -494,15 +1346,13 @@ function toggleSidebar() {
 
 document.getElementById("sidebar-toggle").addEventListener("click", toggleSidebar);
 
-// ── Session indicator ─────────────────────────────────────────────────────────
-
+// ── Session Indicator ─────────────────────────────────────────────────────────
 function renderSessionIndicator() {
   const el = document.getElementById("session-indicator");
   if (el) el.textContent = `Session ${weekFlowState.currentSessionIndex + 1} of 3`;
 }
 
 // ── Back to Dashboard ─────────────────────────────────────────────────────────
-
 document.getElementById("back-to-dashboard-button").addEventListener("click", async () => {
   stopCountdown();
   if (weekFlowState.weekId) {
@@ -519,8 +1369,7 @@ document.getElementById("back-to-dashboard-button").addEventListener("click", as
   showDashboardView();
 });
 
-// ── Micro-Check ───────────────────────────────────────────────────────────────
-
+// ── Micro-Check Overlay ───────────────────────────────────────────────────────
 function showMicroCheck(sessionIndex) {
   const overlay = document.getElementById("micro-check-overlay");
   const submit = document.getElementById("mc-submit");
@@ -531,7 +1380,6 @@ function showMicroCheck(sessionIndex) {
   if (submit) submit.textContent = isLast ? "Finish Week" : "Continue to Next Session";
   if (error) error.textContent = "";
 
-  // Reset form
   const form = document.getElementById("micro-check-form");
   if (form) form.reset();
   const progressVal = document.getElementById("mc-progress-value");
@@ -545,7 +1393,6 @@ function hideMicroCheck() {
   if (overlay) overlay.classList.add("hidden");
 }
 
-// Sync range display
 document.getElementById("mc-progress").addEventListener("input", (e) => {
   const el = document.getElementById("mc-progress-value");
   if (el) el.textContent = e.target.value;
@@ -584,46 +1431,57 @@ document.getElementById("micro-check-form").addEventListener("submit", async (e)
   };
 
   await saveUserWeek(currentUserId, weekFlowState.weekId, dashboardState.weeks[weekFlowState.weekId]);
-
   hideMicroCheck();
 
   if (weekFlowState.currentSessionIndex >= 3) {
-    // All sessions done — mark week complete and return to dashboard
+    // All 3 exploratory sub-sessions done — mark exploratory session as completed
     dashboardState.weeks[weekFlowState.weekId] = {
       ...dashboardState.weeks[weekFlowState.weekId],
       status: "completed",
       sessionsCompleted: true,
+      exploratoryStatus: "completed",
+      exploratoryCompletedAt: new Date().toISOString(),
     };
     await saveUserWeek(currentUserId, weekFlowState.weekId, dashboardState.weeks[weekFlowState.weekId]);
     await loadDashboardState();
     showDashboardView();
   } else {
-    // Next session
+    // Advance to next sub-session
     startCountdown(25 * 60);
     renderSessionIndicator();
     renderSubgoalSidebar();
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ── Session Timer (elapsed, not countdown) ────────────────────────────────────
+// Counts up from 00:00. Label turns red after 25 minutes to remind the user,
+// but there is no hard time limit — the session continues indefinitely.
 let countdownInterval = null;
+const TIMER_WARN_SECONDS = 25 * 60;
 
-function startCountdown(initialSeconds) {
+function startCountdown(_ignoredInitial) {
   if (countdownInterval) clearInterval(countdownInterval);
-  const total = 25 * 60;
-  let remaining = initialSeconds !== undefined ? initialSeconds : total;
-  weekFlowState.sessionTimeRemaining = remaining;
+  let elapsed = 0;
+  weekFlowState.sessionTimeRemaining = 0;
   const bar = document.getElementById("countdown-bar");
   const label = document.getElementById("countdown-label");
+
   function tick() {
-    const m = String(Math.floor(remaining / 60)).padStart(2, "0");
-    const s = String(remaining % 60).padStart(2, "0");
-    if (label) label.textContent = `${m}:${s}`;
-    if (bar) bar.style.setProperty("--progress", remaining / total);
-    weekFlowState.sessionTimeRemaining = remaining;
-    if (remaining <= 0) clearInterval(countdownInterval);
-    remaining--;
+    const m = String(Math.floor(elapsed / 60)).padStart(2, "0");
+    const s = String(elapsed % 60).padStart(2, "0");
+    if (label) {
+      label.textContent = `${m}:${s}`;
+      // Turn red once the suggested 25-minute mark is passed
+      label.style.color = elapsed >= TIMER_WARN_SECONDS ? "#e53e3e" : "";
+    }
+    // Progress bar fills to 100% at 25 min then stays full (and bar turns red via CSS class)
+    const progress = Math.min(elapsed / TIMER_WARN_SECONDS, 1);
+    if (bar) {
+      bar.style.setProperty("--progress", progress);
+      bar.classList.toggle("timer-over", elapsed >= TIMER_WARN_SECONDS);
+    }
+    weekFlowState.sessionTimeRemaining = elapsed;
+    elapsed++;
   }
   tick();
   countdownInterval = setInterval(tick, 1000);
@@ -636,450 +1494,7 @@ function stopCountdown() {
   }
 }
 
-function showAppView() {
-  authShell.classList.add("hidden");
-  onboardingShell.classList.add("hidden");
-  dashboardShell.classList.add("hidden");
-  weekShell.classList.add("hidden");
-  appShell.classList.remove("hidden");
-  startCountdown(weekFlowState.sessionTimeRemaining);
-  renderSubgoalSidebar();
-  renderSessionIndicator();
-}
-
-function showOnboardingView() {
-  authShell.classList.add("hidden");
-  onboardingShell.classList.remove("hidden");
-  dashboardShell.classList.add("hidden");
-  weekShell.classList.add("hidden");
-  appShell.classList.add("hidden");
-}
-
-function showDashboardView() {
-  authShell.classList.add("hidden");
-  onboardingShell.classList.add("hidden");
-  dashboardShell.classList.remove("hidden");
-  weekShell.classList.add("hidden");
-  appShell.classList.add("hidden");
-  postTestShell.classList.add("hidden");
-  renderDashboard();
-}
-
-function showPostTestView() {
-  authShell.classList.add("hidden");
-  onboardingShell.classList.add("hidden");
-  dashboardShell.classList.add("hidden");
-  weekShell.classList.add("hidden");
-  appShell.classList.add("hidden");
-  postTestShell.classList.remove("hidden");
-}
-
-function showWeekShellView() {
-  authShell.classList.add("hidden");
-  onboardingShell.classList.add("hidden");
-  dashboardShell.classList.add("hidden");
-  weekShell.classList.remove("hidden");
-  appShell.classList.add("hidden");
-}
-
-async function handleAuthenticatedUser(user) {
-  resetOnboardingState();
-  resetDashboardState();
-  resetWeekFlowState();
-  currentUserId = user.uid;
-  if (userIdDisplay) {
-    userIdDisplay.textContent = currentUserId;
-  }
-  authUserDisplay.textContent = user.email || user.uid;
-  authError.textContent = "";
-
-  try {
-    const savedData = await getUserOnboarding(user.uid);
-    mergeOnboardingState(savedData.profile || {}, savedData.subgoals || {});
-  } catch (error) {
-    console.error("Onboarding load error:", error);
-  }
-
-  if (onboardingState.completed) {
-    await loadDashboardState();
-    showDashboardView();
-    return;
-  }
-
-  showOnboardingView();
-  renderOnboardingStep();
-}
-
-async function loadDashboardState() {
-  try {
-    const [onboardingData, weekData] = await Promise.all([
-      getUserOnboarding(currentUserId),
-      getUserWeekProgress(currentUserId),
-    ]);
-
-    dashboardState.assignedCondition =
-      onboardingData.profile.assignedCondition || "Condition not assigned yet";
-    dashboardState.currentWeek = onboardingData.profile.currentWeek || inferCurrentWeek(weekData);
-    dashboardState.weeks = createDefaultWeeks();
-
-    weekDefinitions.forEach((week) => {
-      dashboardState.weeks[week.id] = {
-        ...dashboardState.weeks[week.id],
-        ...(weekData[week.id] || {}),
-      };
-    });
-  } catch (error) {
-    console.error("Dashboard load error:", error);
-    dashboardState.assignedCondition = "Condition not assigned yet";
-    dashboardState.currentWeek = "week1";
-    dashboardState.weeks = createDefaultWeeks();
-  }
-}
-
-function renderDashboard() {
-  const completedWeeks = countCompletedWeeks();
-  const allDone = completedWeeks === weekDefinitions.length;
-  const nextWeekId = getNextAvailableWeekId();
-  dashboardUserName.textContent = authUserDisplay.textContent || currentUserId;
-  dashboardProgressLabel.textContent = `${completedWeeks} of ${weekDefinitions.length} weeks completed`;
-  dashboardProgressCaption.textContent = nextWeekId
-    ? `Current week: ${formatWeekLabel(nextWeekId)}`
-    : "All study weeks are completed";
-  dashboardProgressFill.style.width = `${(completedWeeks / weekDefinitions.length) * 100}%`;
-
-  weekCardList.innerHTML = weekDefinitions
-    .map((week) => {
-      const weekState = dashboardState.weeks[week.id];
-      const action = getWeekAction(week.id, weekState);
-
-      return `
-        <article class="week-entry-card">
-          <span class="week-entry-status">${escapeHtml(action.statusLabel)}</span>
-          <h3>${escapeHtml(week.label)}</h3>
-          <p class="week-entry-meta">
-            ${escapeHtml(action.description)}
-          </p>
-          <button
-            class="week-entry-action ${action.completed ? "completed" : ""} ${action.locked ? "locked" : ""}"
-            type="button"
-            data-week-action="${week.id}"
-            ${action.completed || action.locked ? "disabled" : ""}
-          >
-            ${escapeHtml(action.buttonLabel)}
-          </button>
-        </article>
-      `;
-    })
-    .join("");
-
-  document.querySelectorAll("[data-week-action]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const weekId = button.getAttribute("data-week-action");
-      await openWeekFlow(weekId);
-    });
-  });
-
-  postTestButton.disabled = !allDone;
-  postTestButton.textContent = allDone ? "Start Post-Test" : "Complete all 4 weeks to unlock";
-  const desc = postTestButton.previousElementSibling;
-  if (desc) {
-    desc.textContent = allDone
-      ? "All weeks complete. You may now take the overall post-test."
-      : "Complete all four weeks before taking the overall post-test.";
-  }
-}
-
-// ── Post-Test ────────────────────────────────────────────────────────────────
-
-postTestButton.addEventListener("click", async () => {
-  showPostTestView();
-  postTestValidation.textContent = "";
-  postTestContent.innerHTML = '<p style="color:var(--muted)">Loading questions…</p>';
-  try {
-    const questions = await getPostTestQuestions();
-    renderPostTestForm(questions);
-  } catch {
-    postTestContent.innerHTML = '<p style="color:#e53e3e">Failed to load questions. Please try again.</p>';
-  }
-});
-
-postTestBack.addEventListener("click", () => {
-  showDashboardView();
-});
-
-postTestSubmit.addEventListener("click", async () => {
-  postTestValidation.textContent = "";
-  const inputs = postTestContent.querySelectorAll("input, textarea, select");
-  const answers = {};
-  let allAnswered = true;
-
-  inputs.forEach((input) => {
-    if (input.type === "radio") {
-      if (input.checked) answers[input.name] = input.value;
-    } else {
-      answers[input.name] = input.value.trim();
-      if (!input.value.trim()) allAnswered = false;
-    }
-  });
-
-  const radioNames = [...new Set([...postTestContent.querySelectorAll("input[type=radio]")].map((r) => r.name))];
-  radioNames.forEach((name) => { if (!answers[name]) allAnswered = false; });
-
-  if (!allAnswered) {
-    postTestValidation.textContent = "Please answer all questions before submitting.";
-    return;
-  }
-
-  postTestSubmit.disabled = true;
-  postTestSubmit.textContent = "Submitting…";
-  try {
-    await savePostTest(currentUserId, answers);
-    postTestContent.innerHTML = '<p style="font-weight:700;color:var(--accent-dark)">Post-test submitted. Thank you!</p>';
-    postTestValidation.textContent = "";
-    postTestSubmit.classList.add("hidden");
-  } catch {
-    postTestValidation.textContent = "Submission failed. Please try again.";
-    postTestSubmit.disabled = false;
-    postTestSubmit.textContent = "Submit Post-Test";
-  }
-});
-
-function renderPostTestForm(questions) {
-  if (!questions.length) {
-    postTestContent.innerHTML = '<p style="color:var(--muted)">No questions available yet.</p>';
-    return;
-  }
-
-  postTestContent.innerHTML = questions
-    .map((q, i) => {
-      const num = i + 1;
-      if (q.type === "multiple_choice" && Array.isArray(q.options)) {
-        return `
-          <div class="quiz-question-card">
-            <p class="quiz-question-text"><strong>${num}.</strong> ${escapeHtml(q.text)}</p>
-            <div class="quiz-options">
-              ${q.options.map((opt) => `
-                <label class="quiz-option-label">
-                  <input type="radio" name="q_${q.id}" value="${escapeHtml(opt)}" required />
-                  ${escapeHtml(opt)}
-                </label>`).join("")}
-            </div>
-          </div>`;
-      }
-      if (q.type === "short_answer") {
-        return `
-          <div class="quiz-question-card">
-            <p class="quiz-question-text"><strong>${num}.</strong> ${escapeHtml(q.text)}</p>
-            <textarea name="q_${q.id}" rows="3" class="quiz-textarea" placeholder="Your answer…"></textarea>
-          </div>`;
-      }
-      return "";
-    })
-    .join("");
-}
-
-async function openWeekFlow(weekId) {
-  const weekState = dashboardState.weeks[weekId];
-
-  if (isWeekComplete(weekState) || !isWeekUnlocked(weekId)) {
-    return;
-  }
-
-  if (weekState.subgoalsCompleted && weekState.status === "in_progress") {
-    dashboardState.currentWeek = weekId;
-    weekFlowState.weekId = weekId;
-    weekFlowState.subgoals =
-      weekState.subgoals && weekState.subgoals.length === 3
-        ? weekState.subgoals
-        : createDefaultWeekSubgoals();
-    weekFlowState.currentSessionIndex = weekState.currentSessionIndex ?? 0;
-    weekFlowState.sessionTimeRemaining = weekState.sessionTimeRemaining ?? 25 * 60;
-    await saveUserStudyProfile(currentUserId, {
-      currentWeek: dashboardState.currentWeek,
-      assignedCondition: dashboardState.assignedCondition,
-      weekProgress: summarizeWeekProgress(),
-    });
-    showAppView();
-    return;
-  }
-
-  weekFlowState.weekId = weekId;
-  weekFlowState.delayedTestAnswers = weekState.delayedTestAnswers || {};
-  weekFlowState.subgoals =
-    weekState.subgoals && weekState.subgoals.length === 3
-      ? weekState.subgoals
-      : createDefaultWeekSubgoals();
-  weekFlowState.step =
-    weekId === "week1" || weekState.delayedTestCompleted ? "subgoals" : "delayedTest";
-
-  const nextStatus = weekState.sessionsCompleted ? "completed" : "in_progress";
-  dashboardState.weeks[weekId] = {
-    ...weekState,
-    status: nextStatus,
-    startedAt: weekState.startedAt || new Date().toISOString(),
-  };
-  dashboardState.currentWeek = weekId;
-
-  await saveUserWeek(currentUserId, weekId, {
-    ...dashboardState.weeks[weekId],
-    delayedTestCompleted: Boolean(weekState.delayedTestCompleted),
-    subgoalsCompleted: Boolean(weekState.subgoalsCompleted),
-    delayedTestAnswers: weekFlowState.delayedTestAnswers,
-    subgoals: weekFlowState.subgoals,
-  });
-  await saveUserStudyProfile(currentUserId, {
-    currentWeek: dashboardState.currentWeek,
-    assignedCondition: dashboardState.assignedCondition,
-    weekProgress: summarizeWeekProgress(),
-  });
-
-  showWeekShellView();
-  renderWeekFlowStep();
-}
-
-function renderWeekFlowStep() {
-  const weekLabel = formatWeekLabel(weekFlowState.weekId);
-  const weekState = dashboardState.weeks[weekFlowState.weekId];
-  weekShellEyebrow.textContent = weekLabel;
-  weekShellValidation.textContent = "";
-
-  if (weekFlowState.step === "delayedTest") {
-    weekShellTitle.textContent = `Short Delayed Test`;
-    weekShellSubtitle.textContent =
-      " ";
-    weekShellNext.textContent = "Submit Delayed Test";
-    weekShellContent.innerHTML = `
-      <section class="onboarding-section">
-        <p class="inline-note">
-          ${escapeHtml(weekLabel)} starts with a short delayed test before sub-goal planning.
-        </p>
-        <div class="quiz-list">
-          ${getDelayedTestQuestions(weekFlowState.weekId)
-            .map((question, index) => renderDelayedQuestionCard(question, index))
-            .join("")}
-        </div>
-      </section>
-    `;
-    return;
-  }
-
-  weekShellTitle.textContent = `Sub-goal Planning`;
-  weekShellSubtitle.textContent =
-    weekFlowState.weekId === "week1"
-      ? ""
-      : "";
-  weekShellNext.textContent = "Save Sub-goals and Continue";
-  weekShellContent.innerHTML = `
-    <section class="onboarding-section">
-      <div class="subgoal-list">
-        ${weekFlowState.subgoals
-          .map(
-            (goal, index) => `
-              <article class="subgoal-card">
-                <!-- <h3>${escapeHtml(weekLabel)} Sub-goal ${index + 1}</h3> -->
-                <div class="form-grid">
-                  <div class="field-group full-width">
-                    <label for="weekly-goal-question-${index}">Sub-goal question</label>
-                    <input
-                      id="weekly-goal-question-${index}"
-                      type="text"
-                      value="${escapeHtml(goal.question)}"
-                      placeholder="What do you want to focus on this week?"
-                    />
-                  </div>
-                  <div class="field-group">
-                    <label for="weekly-goal-type-${index}">Goal type</label>
-                    <select id="weekly-goal-type-${index}">
-                      ${renderSelectOptions(
-                        ["Concept", "Evidence", "Comparison", "Application"],
-                        goal.type
-                      )}
-                    </select>
-                  </div>
-                  <div class="field-group">
-                    <label for="weekly-goal-importance-${index}">Importance</label>
-                    <input
-                      id="weekly-goal-importance-${index}"
-                      type="range"
-                      min="1"
-                      max="7"
-                      value="${escapeHtml(goal.importance)}"
-                    />
-                    <span class="scale-value">Current value: <strong id="weekly-goal-importance-value-${index}">${escapeHtml(
-                      goal.importance
-                    )}</strong> / 7</span>
-                  </div>
-                  <div class="field-group full-width">
-                    <label for="weekly-goal-confidence-${index}">Confidence</label>
-                    <input
-                      id="weekly-goal-confidence-${index}"
-                      type="range"
-                      min="1"
-                      max="7"
-                      value="${escapeHtml(goal.confidence)}"
-                    />
-                    <span class="scale-value">Current value: <strong id="weekly-goal-confidence-value-${index}">${escapeHtml(
-                      goal.confidence
-                    )}</strong> / 7</span>
-                  </div>
-                </div>
-              </article>
-            `
-          )
-          .join("")}
-      </div>
-    </section>
-  `;
-
-  weekFlowState.subgoals.forEach((_, index) => {
-    attachScaleMirror(`weekly-goal-importance-${index}`, `weekly-goal-importance-value-${index}`);
-    attachScaleMirror(`weekly-goal-confidence-${index}`, `weekly-goal-confidence-value-${index}`);
-  });
-}
-
-function renderDelayedQuestionCard(question, index) {
-  if (question.type === "shortAnswer") {
-    return `
-      <article class="question-card">
-        <h3>Question ${index + 1}</h3>
-        <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
-        <div class="field-group full-width">
-          <label for="${question.id}">Short answer</label>
-          <textarea id="${question.id}" placeholder="Type your response here...">${escapeHtml(
-            weekFlowState.delayedTestAnswers[question.id] || ""
-          )}</textarea>
-        </div>
-      </article>
-    `;
-  }
-
-  return `
-    <article class="question-card">
-      <h3>Question ${index + 1}</h3>
-      <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
-      <div class="option-list">
-        ${question.options
-          .map(
-            (option) => `
-              <label>
-                <input
-                  type="radio"
-                  name="${question.id}"
-                  value="${escapeHtml(option)}"
-                  ${
-                    weekFlowState.delayedTestAnswers[question.id] === option ? "checked" : ""
-                  }
-                />
-                ${escapeHtml(option)}
-              </label>
-            `
-          )
-          .join("")}
-      </div>
-    </article>
-  `;
-}
-
+// ── Search Results / Summary / Keywords ──────────────────────────────────────
 function renderResults(results) {
   if (!results.length) {
     renderEmptyState("No results were returned for this query.");
@@ -1101,7 +1516,6 @@ function renderResults(results) {
 
     link.addEventListener("click", async (event) => {
       event.preventDefault();
-
       try {
         await logClickEvent({
           user_id: currentUserId,
@@ -1139,30 +1553,13 @@ function renderResults(results) {
   });
 }
 
-function renderSummary(summary) {
-  if (!summaryText) {
-    return;
-  }
-
-  if (!summary) {
-    summaryText.textContent =
-      "No Groq summary is available yet. Add GROQ_API_KEY to enable automatic summaries.";
-    return;
-  }
-
-  const words = summary.trim().split(/\s+/);
-  summaryText.textContent = words.length > 150 ? words.slice(0, 150).join(" ") + "…" : summary;
-}
-
 function renderKeywords(keywords) {
   if (!keywords.length) {
-    keywordList.innerHTML =
-      '<span class="keyword-empty">No keywords available yet.</span>';
+    keywordList.innerHTML = '<span class="keyword-empty">No keywords available yet.</span>';
     return;
   }
 
   keywordList.innerHTML = "";
-
   keywords.forEach((keyword) => {
     const chip = document.createElement("span");
     chip.className = "keyword-chip";
@@ -1171,12 +1568,11 @@ function renderKeywords(keywords) {
   });
 }
 
+// ── Click / Return Logging ────────────────────────────────────────────────────
 async function logClickEvent(payload) {
   const response = await fetch("/api/click", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
@@ -1186,44 +1582,195 @@ async function logClickEvent(payload) {
   }
 }
 
-async function tryLogReturnEvent() {
-  if (!pendingReturnContext || !leftMainPageAt || returnLogged) {
+function setActiveTool(nextTool) {
+  if (!nextTool || nextTool === activeTool) return;
+
+  const previousTool = activeTool;
+  activeTool = nextTool;
+
+  toolToggleButtons.forEach((button) => {
+    const isActive = button.dataset.toolTab === nextTool;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  });
+
+  toolPanels.forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.toolPanel !== nextTool);
+  });
+
+  logToolSwitch(previousTool, nextTool).catch((error) => {
+    console.error("Tool switch log failed:", error);
+  });
+
+  enqueueQuickEvaluation({
+    eventType: "tool_switch_reason",
+    tool: nextTool,
+    question: "Why did you switch tools?",
+    responseKey: "reason",
+    options: [
+      { label: "Need broader sources", value: "need_broader_sources" },
+      { label: "Need an explanation", value: "need_explanation" },
+      { label: "Verify or compare", value: "verify_or_compare" },
+      { label: "Current tool was not enough", value: "current_tool_not_enough" },
+    ],
+    metadata: {
+      previousTool,
+      nextTool,
+    },
+  });
+}
+
+async function logToolSwitch(previousTool, nextTool) {
+  const response = await fetch("/api/tool-switch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: currentUserId,
+      session_id: sessionId,
+      previous_tool: previousTool,
+      next_tool: nextTool,
+      switched_at: new Date().toISOString(),
+    }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.error || "Tool switch log request failed.");
+  }
+}
+
+function enqueueQuickEvaluation(config) {
+  if (!quickEvaluationPopup || !quickEvaluationQuestion || !quickEvaluationOptions) return;
+
+  evaluationQueue.push({
+    ...config,
+    timestamp: new Date().toISOString(),
+  });
+
+  if (!activeEvaluation) showNextQuickEvaluation();
+}
+
+function showNextQuickEvaluation() {
+  activeEvaluation = evaluationQueue.shift() || null;
+  if (!activeEvaluation) {
+    quickEvaluationPopup.classList.add("hidden");
     return;
   }
 
-  const returnedAt = new Date();
-  const timeAwayMs = returnedAt.getTime() - leftMainPageAt.getTime();
+  quickEvaluationQuestion.textContent = activeEvaluation.question;
+  quickEvaluationOptions.innerHTML = "";
+  activeEvaluation.options.forEach((option) => {
+    const button = document.createElement("button");
+    button.className = "quick-evaluation-option";
+    button.type = "button";
+    button.textContent = option.label;
+    button.addEventListener("click", () => submitQuickEvaluation(option.value));
+    quickEvaluationOptions.appendChild(button);
+  });
 
-  if (timeAwayMs < 0) {
-    return;
-  }
+  quickEvaluationPopup.classList.remove("hidden");
+}
+
+async function submitQuickEvaluation(value) {
+  if (!activeEvaluation) return;
+
+  const evaluation = activeEvaluation;
+  activeEvaluation = null;
+  quickEvaluationPopup.classList.add("hidden");
+
+  const responsePayload = {
+    userId: currentUserId,
+    week: getActiveEvaluationWeek(),
+    session: getActiveEvaluationSession(),
+    sessionId,
+    tool: evaluation.tool,
+    eventType: evaluation.eventType,
+    timestamp: evaluation.timestamp,
+    ...(evaluation.metadata || {}),
+  };
+  responsePayload[evaluation.responseKey] = value;
 
   try {
-    await fetch("/api/return", {
+    await saveQuickEvaluation(currentUserId, responsePayload);
+  } catch (error) {
+    console.error("Quick evaluation save failed:", error);
+  } finally {
+    showNextQuickEvaluation();
+  }
+}
+
+function dismissQuickEvaluation() {
+  activeEvaluation = null;
+  quickEvaluationPopup.classList.add("hidden");
+  showNextQuickEvaluation();
+}
+
+function createRatingOptions() {
+  return [1, 2, 3, 4, 5].map((rating) => ({
+    label: String(rating),
+    value: rating,
+  }));
+}
+
+function getActiveEvaluationWeek() {
+  return weekFlowState.weekId || dashboardState.currentWeek || "";
+}
+
+function getActiveEvaluationSession() {
+  return `exploratory_${weekFlowState.currentSessionIndex + 1}`;
+}
+
+async function tryLogReturnEvent() {
+  if (!pendingReturnContext || !leftMainPageAt || returnLogged) return;
+
+  const returnContext = { ...pendingReturnContext };
+  const returnedAt = new Date();
+  const timeAwayMs = returnedAt.getTime() - leftMainPageAt.getTime();
+  if (timeAwayMs < 0) return;
+
+  try {
+    const response = await fetch("/api/return", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         user_id: currentUserId,
         session_id: sessionId,
-        query_text: pendingReturnContext.query_text,
-        clicked_url: pendingReturnContext.clicked_url,
-        clicked_rank: pendingReturnContext.clicked_rank,
+        query_text: returnContext.query_text,
+        clicked_url: returnContext.clicked_url,
+        clicked_rank: returnContext.clicked_rank,
         left_main_page_at: leftMainPageAt.toISOString(),
         returned_to_main_page_at: returnedAt.toISOString(),
         time_away_ms: timeAwayMs,
       }),
     });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || "Return log request failed.");
+    }
 
     returnLogged = true;
     pendingReturnContext = null;
     leftMainPageAt = null;
+    enqueueQuickEvaluation({
+      eventType: "browser_result_returned",
+      tool: "browser",
+      question: "How helpful was the page you visited?",
+      responseKey: "rating",
+      options: createRatingOptions(),
+      metadata: {
+        queryText: returnContext.query_text,
+        clickedUrl: returnContext.clicked_url,
+        clickedRank: returnContext.clicked_rank,
+        returnedAt: returnedAt.toISOString(),
+        timeAwayMs,
+      },
+    });
   } catch (error) {
     console.error("Return log failed:", error);
   }
 }
 
+// ── Utilities ─────────────────────────────────────────────────────────────────
 function renderEmptyState(message) {
   resultsContainer.innerHTML = `<div class="empty-state">${message}</div>`;
 }
@@ -1238,34 +1785,21 @@ function appendChatMessage(role, text) {
 
 function mapAuthError(error) {
   const code = error && error.code ? error.code : "";
-
-  if (code === "auth/email-already-in-use") {
+  if (code === "auth/email-already-in-use")
     return "This email is already registered. Try logging in instead.";
-  }
-
-  if (code === "auth/invalid-email") {
-    return "Enter a valid email address.";
-  }
-
-  if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+  if (code === "auth/invalid-email") return "Enter a valid email address.";
+  if (code === "auth/invalid-credential" || code === "auth/wrong-password")
     return "The email or password is incorrect.";
-  }
-
-  if (code === "auth/user-not-found") {
+  if (code === "auth/user-not-found")
     return "No account was found for this email.";
-  }
-
-  if (code === "auth/weak-password") {
+  if (code === "auth/weak-password")
     return "Password is too weak. Use at least 6 characters.";
-  }
-
-  if (code === "auth/too-many-requests") {
+  if (code === "auth/too-many-requests")
     return "Too many attempts. Please wait and try again.";
-  }
-
   return error && error.message ? error.message : "Authentication failed.";
 }
 
+// ── Onboarding Logic ──────────────────────────────────────────────────────────
 function mergeOnboardingState(profile, subgoalDoc) {
   onboardingState.completed = Boolean(profile.onboardingCompleted);
   onboardingState.step =
@@ -1326,12 +1860,8 @@ function renderOnboardingStep() {
     onboardingContent.innerHTML = `
       <section class="onboarding-section">
         <div class="onboarding-panel consent-box">
-          <p class="onboarding-copy">
-            Placeholder study consent text. 
-          </p>
-          <p class="onboarding-copy">
-            Placeholder privacy and participation statement. 
-          </p>
+          <p class="onboarding-copy">Placeholder study consent text.</p>
+          <p class="onboarding-copy">Placeholder privacy and participation statement.</p>
         </div>
         <label class="consent-check">
           <input id="consent-agree" type="checkbox" ${onboardingState.consentAgreed ? "checked" : ""} />
@@ -1354,15 +1884,7 @@ function renderOnboardingStep() {
             <label for="age-range">Age range</label>
             <select id="age-range">
               ${renderSelectOptions(
-                [
-                  "",
-                  "18-24",
-                  "25-34",
-                  "35-44",
-                  "45-54",
-                  "55-64",
-                  "65+",
-                ],
+                ["", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"],
                 onboardingState.demographics.ageRange,
                 "Select age range"
               )}
@@ -1372,15 +1894,7 @@ function renderOnboardingStep() {
             <label for="education-level">Education level</label>
             <select id="education-level">
               ${renderSelectOptions(
-                [
-                  "",
-                  "High school",
-                  "Some college",
-                  "Bachelor's degree",
-                  "Master's degree",
-                  "Doctoral degree",
-                  "Other",
-                ],
+                ["", "High school", "Some college", "Bachelor's degree", "Master's degree", "Doctoral degree", "Other"],
                 onboardingState.demographics.educationLevel,
                 "Select education level"
               )}
@@ -1388,35 +1902,17 @@ function renderOnboardingStep() {
           </div>
           <div class="field-group full-width">
             <label for="primary-language">Primary language</label>
-            <input id="primary-language" type="text" value="${escapeHtml(
-              onboardingState.demographics.primaryLanguage
-            )}" placeholder="e.g. English" />
+            <input id="primary-language" type="text" value="${escapeHtml(onboardingState.demographics.primaryLanguage)}" placeholder="e.g. English" />
           </div>
           <div class="field-group full-width">
             <label for="search-engine-familiarity">Familiarity with search engines</label>
-            <input
-              id="search-engine-familiarity"
-              type="range"
-              min="1"
-              max="7"
-              value="${escapeHtml(onboardingState.demographics.searchEngineFamiliarity)}"
-            />
-            <span class="scale-value">Current value: <strong id="search-engine-familiarity-value">${escapeHtml(
-              onboardingState.demographics.searchEngineFamiliarity
-            )}</strong> / 7</span>
+            <input id="search-engine-familiarity" type="range" min="1" max="7" value="${escapeHtml(onboardingState.demographics.searchEngineFamiliarity)}" />
+            <span class="scale-value">Current value: <strong id="search-engine-familiarity-value">${escapeHtml(onboardingState.demographics.searchEngineFamiliarity)}</strong> / 7</span>
           </div>
           <div class="field-group full-width">
             <label for="conversational-ai-familiarity">Familiarity with conversational AI tools (e.g., ChatGPT)</label>
-            <input
-              id="conversational-ai-familiarity"
-              type="range"
-              min="1"
-              max="7"
-              value="${escapeHtml(onboardingState.demographics.conversationalAiFamiliarity)}"
-            />
-            <span class="scale-value">Current value: <strong id="conversational-ai-familiarity-value">${escapeHtml(
-              onboardingState.demographics.conversationalAiFamiliarity
-            )}</strong> / 7</span>
+            <input id="conversational-ai-familiarity" type="range" min="1" max="7" value="${escapeHtml(onboardingState.demographics.conversationalAiFamiliarity)}" />
+            <span class="scale-value">Current value: <strong id="conversational-ai-familiarity-value">${escapeHtml(onboardingState.demographics.conversationalAiFamiliarity)}</strong> / 7</span>
           </div>
           <div class="field-group full-width">
             <label for="technology-usage-frequency">Technology familiarity and usage: frequency of use</label>
@@ -1433,10 +1929,7 @@ function renderOnboardingStep() {
     `;
 
     attachScaleMirror("search-engine-familiarity", "search-engine-familiarity-value");
-    attachScaleMirror(
-      "conversational-ai-familiarity",
-      "conversational-ai-familiarity-value"
-    );
+    attachScaleMirror("conversational-ai-familiarity", "conversational-ai-familiarity-value");
     return;
   }
 
@@ -1466,9 +1959,7 @@ function renderOnboardingStep() {
                               type="radio"
                               name="${question.id}"
                               value="${escapeHtml(option)}"
-                              ${
-                                onboardingState.quizAnswers[question.id] === option ? "checked" : ""
-                              }
+                              ${onboardingState.quizAnswers[question.id] === option ? "checked" : ""}
                             />
                             ${escapeHtml(option)}
                           </label>
@@ -1527,9 +2018,7 @@ function renderOnboardingStep() {
                         max="7"
                         value="${escapeHtml(goal.importance)}"
                       />
-                      <span class="scale-value">Current value: <strong id="goal-importance-value-${index}">${escapeHtml(
-                        goal.importance
-                      )}</strong> / 7</span>
+                      <span class="scale-value">Current value: <strong id="goal-importance-value-${index}">${escapeHtml(goal.importance)}</strong> / 7</span>
                     </div>
                     <div class="field-group full-width">
                       <label for="goal-confidence-${index}">Confidence</label>
@@ -1540,9 +2029,7 @@ function renderOnboardingStep() {
                         max="7"
                         value="${escapeHtml(goal.confidence)}"
                       />
-                      <span class="scale-value">Current value: <strong id="goal-confidence-value-${index}">${escapeHtml(
-                        goal.confidence
-                      )}</strong> / 7</span>
+                      <span class="scale-value">Current value: <strong id="goal-confidence-value-${index}">${escapeHtml(goal.confidence)}</strong> / 7</span>
                     </div>
                   </div>
                 </article>
@@ -1560,6 +2047,7 @@ function renderOnboardingStep() {
     return;
   }
 
+  // Complete step
   onboardingTitle.textContent = "Week 0 Completed";
   onboardingSubtitle.textContent =
     "Your setup data has been saved. You can now continue to the main research dashboard.";
@@ -1578,9 +2066,7 @@ function renderOnboardingStep() {
 }
 
 function readAndValidateCurrentStep() {
-  if (onboardingState.step === "welcome") {
-    return "";
-  }
+  if (onboardingState.step === "welcome") return "";
 
   if (onboardingState.step === "consent") {
     onboardingState.consentAgreed = Boolean(
@@ -1598,9 +2084,7 @@ function readAndValidateCurrentStep() {
       primaryLanguage: document.getElementById("primary-language").value.trim(),
       educationLevel: document.getElementById("education-level").value,
       searchEngineFamiliarity: document.getElementById("search-engine-familiarity").value,
-      conversationalAiFamiliarity: document.getElementById(
-        "conversational-ai-familiarity"
-      ).value,
+      conversationalAiFamiliarity: document.getElementById("conversational-ai-familiarity").value,
       technologyUsageFrequency: document.getElementById("technology-usage-frequency").value,
     };
 
@@ -1626,7 +2110,7 @@ function readAndValidateCurrentStep() {
   }
 
   if (onboardingState.step === "subgoals") {
-    const nextGoals = onboardingState.subgoals.map((goal, index) => ({
+    const nextGoals = onboardingState.subgoals.map((_goal, index) => ({
       question: document.getElementById(`goal-question-${index}`).value.trim(),
       type: document.getElementById(`goal-type-${index}`).value,
       importance: document.getElementById(`goal-importance-${index}`).value,
@@ -1661,6 +2145,7 @@ async function persistOnboardingProgress() {
   }
 }
 
+// ── Week Flow Validation & Persistence ───────────────────────────────────────
 function readAndValidateWeekStep() {
   if (weekFlowState.step === "delayedTest") {
     const answers = {};
@@ -1669,17 +2154,13 @@ function readAndValidateWeekStep() {
     for (const question of questions) {
       if (question.type === "shortAnswer") {
         const value = document.getElementById(question.id).value.trim();
-        if (!value) {
-          return "Please answer all delayed-test questions before continuing.";
-        }
+        if (!value) return "Please answer all delayed-test questions before continuing.";
         answers[question.id] = value;
         continue;
       }
 
       const selected = document.querySelector(`input[name="${question.id}"]:checked`);
-      if (!selected) {
-        return "Please answer all delayed-test questions before continuing.";
-      }
+      if (!selected) return "Please answer all delayed-test questions before continuing.";
       answers[question.id] = selected.value;
     }
 
@@ -1687,7 +2168,7 @@ function readAndValidateWeekStep() {
     return "";
   }
 
-  const nextGoals = weekFlowState.subgoals.map((goal, index) => ({
+  const nextGoals = weekFlowState.subgoals.map((_goal, index) => ({
     question: document.getElementById(`weekly-goal-question-${index}`).value.trim(),
     type: document.getElementById(`weekly-goal-type-${index}`).value,
     importance: document.getElementById(`weekly-goal-importance-${index}`).value,
@@ -1695,9 +2176,7 @@ function readAndValidateWeekStep() {
   }));
 
   const incompleteGoal = nextGoals.find((goal) => !goal.question || !goal.type);
-  if (incompleteGoal) {
-    return "Please complete all three weekly sub-goals before continuing.";
-  }
+  if (incompleteGoal) return "Please complete all three weekly sub-goals before continuing.";
 
   weekFlowState.subgoals = nextGoals;
   return "";
@@ -1706,31 +2185,25 @@ function readAndValidateWeekStep() {
 async function persistWeekFlowState() {
   const weekId = weekFlowState.weekId;
   const currentWeek = dashboardState.weeks[weekId];
+
   const payload = {
     ...currentWeek,
     delayedTestCompleted:
-      weekId === "week1" ? true : weekFlowState.step === "delayedTest" || currentWeek.delayedTestCompleted,
+      weekId === "week1"
+        ? true
+        : weekFlowState.step === "delayedTest"
+          ? true
+          : Boolean(currentWeek.delayedTestCompleted),
     subgoalsCompleted: weekFlowState.step === "subgoals",
-    delayedTestAnswers:
-      weekId === "week1" ? {} : weekFlowState.delayedTestAnswers,
+    delayedTestAnswers: weekId === "week1" ? {} : weekFlowState.delayedTestAnswers,
     subgoals: weekFlowState.subgoals,
   };
 
-  if (weekFlowState.step === "delayedTest") {
-    payload.delayedTestCompleted = true;
-    payload.subgoalsCompleted = false;
-  }
-
-  if (weekFlowState.step === "subgoals") {
-    payload.delayedTestCompleted = weekId === "week1" ? true : true;
-    payload.subgoalsCompleted = true;
-  }
-
   dashboardState.weeks[weekId] = payload;
-
   await saveUserWeek(currentUserId, weekId, payload);
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function setOnboardingStep(step) {
   onboardingState.step = step;
   renderOnboardingStep();
@@ -1739,13 +2212,8 @@ function setOnboardingStep(step) {
 function attachScaleMirror(inputId, valueId) {
   const input = document.getElementById(inputId);
   const value = document.getElementById(valueId);
-  if (!input || !value) {
-    return;
-  }
-
-  input.addEventListener("input", () => {
-    value.textContent = input.value;
-  });
+  if (!input || !value) return;
+  input.addEventListener("input", () => { value.textContent = input.value; });
 }
 
 function renderSelectOptions(options, selectedValue, placeholder) {
@@ -1755,29 +2223,37 @@ function renderSelectOptions(options, selectedValue, placeholder) {
       `<option value="" ${selectedValue ? "" : "selected"} disabled>${escapeHtml(placeholder)}</option>`
     );
   }
-
   options.forEach((option) => {
-    if (!option) {
-      return;
-    }
-
+    if (!option) return;
     rendered.push(
-      `<option value="${escapeHtml(option)}" ${
-        option === selectedValue ? "selected" : ""
-      }>${escapeHtml(option)}</option>`
+      `<option value="${escapeHtml(option)}" ${option === selectedValue ? "selected" : ""}>${escapeHtml(option)}</option>`
     );
   });
-
   return rendered.join("");
 }
 
+// ── Default State Factories ───────────────────────────────────────────────────
 function createDefaultSubgoals() {
   return [createDefaultSubgoal(1), createDefaultSubgoal(2), createDefaultSubgoal(3)];
 }
 
+function createDefaultSubgoal(index) {
+  return { order: index, question: "", type: "Concept", importance: "4", confidence: "4" };
+}
+
+// Default week state includes both the new session-status fields and the
+// existing fields used by the exploratory session / app-shell.
 function createDefaultWeeks() {
-  return weekDefinitions.reduce((accumulator, week) => {
-    accumulator[week.id] = {
+  return weekDefinitions.reduce((acc, week) => {
+    acc[week.id] = {
+      // New per-session status fields (8-session model)
+      structuredStatus: "not_started",
+      exploratoryStatus: "not_started",
+      structuredStep: "instructions",   // "instructions" | "assessment" | "completed"
+      structuredCompletedAt: null,
+      exploratoryStartedAt: null,
+      exploratoryCompletedAt: null,
+      // Legacy fields used by the exploratory session app-shell flow
       status: "not_started",
       delayedTestCompleted: week.id === "week1",
       subgoalsCompleted: false,
@@ -1788,12 +2264,16 @@ function createDefaultWeeks() {
       sessionTimeRemaining: 25 * 60,
       sessions: [null, null, null],
     };
-    return accumulator;
+    return acc;
   }, {});
 }
 
 function createDefaultWeekSubgoals() {
-  return [createDefaultWeekSubgoal(1), createDefaultWeekSubgoal(2), createDefaultWeekSubgoal(3)];
+  return [
+    createDefaultWeekSubgoal(1),
+    createDefaultWeekSubgoal(2),
+    createDefaultWeekSubgoal(3),
+  ];
 }
 
 function createDefaultWeekSubgoal(index) {
@@ -1807,12 +2287,7 @@ function createDefaultWeekSubgoal(index) {
   };
 }
 
-function createDefaultWeekState(weekId) {
-  return {
-    ...createDefaultWeeks()[weekId],
-  };
-}
-
+// ── State Reset ───────────────────────────────────────────────────────────────
 function resetOnboardingState() {
   onboardingState.step = "welcome";
   onboardingState.completed = false;
@@ -1832,6 +2307,7 @@ function resetOnboardingState() {
 function resetDashboardState() {
   dashboardState.assignedCondition = "Condition not assigned yet";
   dashboardState.currentWeek = "week1";
+  dashboardState.currentSession = "structured";
   dashboardState.weeks = createDefaultWeeks();
 }
 
@@ -1844,86 +2320,58 @@ function resetWeekFlowState() {
   weekFlowState.sessionTimeRemaining = 25 * 60;
 }
 
-function createDefaultSubgoal(index) {
-  return {
-    order: index,
-    question: "",
-    type: "Concept",
-    importance: "4",
-    confidence: "4",
-  };
+// ── Week Completion / Unlocking ───────────────────────────────────────────────
+
+// A week is fully complete when BOTH sessions are done.
+// Also checks the legacy sessionsCompleted field for backward compatibility.
+function isWeekComplete(weekState) {
+  const structuredDone = weekState.structuredStatus === "completed";
+  const exploratoryDone =
+    weekState.exploratoryStatus === "completed" || Boolean(weekState.sessionsCompleted);
+  return structuredDone && exploratoryDone;
 }
 
-function getWeekAction(weekId, weekState) {
-  if (isWeekComplete(weekState)) {
-    return {
-      statusLabel: "Completed",
-      buttonLabel: "Completed",
-      description: "This week has already been fully completed.",
-      completed: true,
-      locked: false,
-    };
-  }
-
-  if (!isWeekUnlocked(weekId)) {
-    const previousWeekIndex = weekDefinitions.findIndex((week) => week.id === weekId) - 1;
-    const previousWeekId = weekDefinitions[previousWeekIndex].id;
-
-    return {
-      statusLabel: "Locked",
-      buttonLabel: "Locked",
-      description: `Complete ${formatWeekLabel(previousWeekId)} before this week becomes available.`,
-      completed: false,
-      locked: true,
-    };
-  }
-
-  if (weekState.status === "in_progress") {
-    if (weekState.subgoalsCompleted) {
-      return {
-        statusLabel: "In Progress",
-        buttonLabel: `Continue ${formatWeekLabel(weekId)}`,
-        description: "Weekly setup is finished. Continue into the main research page.",
-        completed: false,
-        locked: false,
-      };
-    }
-
-    return {
-      statusLabel: "In Progress",
-      buttonLabel: `Continue ${formatWeekLabel(weekId)}`,
-      description: "This week has started but still needs delayed-test or sub-goal completion.",
-      completed: false,
-      locked: false,
-    };
-  }
-
-  return {
-    statusLabel: "Not Started",
-    buttonLabel: `Start ${formatWeekLabel(weekId)}`,
-    description:
-      weekId === "week1"
-        ? "Week 1 begins directly with sub-goal planning."
-        : "This week starts with a short delayed test and then sub-goal planning.",
-    completed: false,
-    locked: false,
-  };
+// Week 1 is always unlocked. Later weeks unlock when the previous week is fully complete.
+function isWeekUnlocked(weekId) {
+  const currentIndex = weekDefinitions.findIndex((w) => w.id === weekId);
+  if (currentIndex <= 0) return true;
+  const previousWeekId = weekDefinitions[currentIndex - 1].id;
+  return isWeekComplete(dashboardState.weeks[previousWeekId] || {});
 }
 
 function countCompletedWeeks() {
-  return weekDefinitions.filter((week) => isWeekComplete(dashboardState.weeks[week.id])).length;
+  return weekDefinitions.filter((week) =>
+    isWeekComplete(dashboardState.weeks[week.id])
+  ).length;
+}
+
+// Human-readable hint for the dashboard progress caption
+function getNextSessionDescription() {
+  for (const week of weekDefinitions) {
+    const state = dashboardState.weeks[week.id];
+    if (!isWeekUnlocked(week.id)) continue;
+    if (state.structuredStatus !== "completed") {
+      return `${formatWeekLabel(week.id)} Structured Session`;
+    }
+    if ((state.exploratoryStatus || "not_started") !== "completed") {
+      return `${formatWeekLabel(week.id)} Exploratory Session`;
+    }
+  }
+  return "All sessions complete";
 }
 
 function inferCurrentWeek(weekData) {
-  const activeWeek = weekDefinitions.find(
-    (week) => weekData[week.id] && weekData[week.id].status === "in_progress"
+  // Prefer a week that has an in-progress exploratory session
+  const active = weekDefinitions.find(
+    (week) =>
+      weekData[week.id] &&
+      (weekData[week.id].exploratoryStatus === "in_progress" ||
+        weekData[week.id].status === "in_progress")
   );
-  if (activeWeek) {
-    return activeWeek.id;
-  }
+  if (active) return active.id;
 
-  const nextWeek = weekDefinitions.find((week) => !isWeekComplete(weekData[week.id] || {}));
-  return nextWeek ? nextWeek.id : weekDefinitions[weekDefinitions.length - 1].id;
+  const next = weekDefinitions.find((week) => !isWeekComplete(weekData[week.id] || {}));
+  return next ? next.id : weekDefinitions[weekDefinitions.length - 1].id;
 }
 
 function getDelayedTestQuestions(weekId) {
@@ -1936,34 +2384,17 @@ function formatWeekLabel(weekId) {
 }
 
 function summarizeWeekProgress() {
-  return weekDefinitions.reduce((accumulator, week) => {
+  return weekDefinitions.reduce((acc, week) => {
     const weekState = dashboardState.weeks[week.id];
-    accumulator[week.id] = {
+    acc[week.id] = {
+      structuredStatus: weekState.structuredStatus || "not_started",
+      exploratoryStatus: weekState.exploratoryStatus || "not_started",
       status: weekState.status,
       delayedTestCompleted: weekState.delayedTestCompleted,
       subgoalsCompleted: weekState.subgoalsCompleted,
     };
-    return accumulator;
+    return acc;
   }, {});
-}
-
-function isWeekComplete(weekState) {
-  return weekState.status === "completed" || Boolean(weekState.sessionsCompleted);
-}
-
-function isWeekUnlocked(weekId) {
-  const currentIndex = weekDefinitions.findIndex((week) => week.id === weekId);
-  if (currentIndex <= 0) {
-    return true;
-  }
-
-  const previousWeekId = weekDefinitions[currentIndex - 1].id;
-  return isWeekComplete(dashboardState.weeks[previousWeekId] || {});
-}
-
-function getNextAvailableWeekId() {
-  const nextWeek = weekDefinitions.find((week) => !isWeekComplete(dashboardState.weeks[week.id]));
-  return nextWeek ? nextWeek.id : "";
 }
 
 function escapeHtml(value) {

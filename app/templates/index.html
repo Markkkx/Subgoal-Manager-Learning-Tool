@@ -102,7 +102,7 @@
           <section class="dashboard-panel">
             <div class="panel-header">
               <h2>Weekly Entry</h2>
-              <span class="panel-tag">Weeks 1-4</span>
+              <span class="panel-tag">4 Weeks · 8 Sessions</span>
             </div>
             <div id="week-card-list" class="week-card-list"></div>
           </section>
@@ -139,11 +139,12 @@
         </div>
       </section>
 
+      <!-- Exploratory Session Shell (delayed test + subgoal planning before app-shell) -->
       <section id="week-shell" class="week-shell hidden">
         <div class="week-card">
           <div class="week-header">
             <div>
-              <p class="eyebrow" id="week-shell-eyebrow">Week Flow</p>
+              <p class="eyebrow" id="week-shell-eyebrow">Exploratory Session</p>
               <h1 id="week-shell-title" class="onboarding-title"></h1>
               <p id="week-shell-subtitle" class="onboarding-subtitle"></p>
             </div>
@@ -155,6 +156,27 @@
           <div class="onboarding-actions">
             <button id="week-shell-back" class="secondary-action" type="button">Back to Dashboard</button>
             <button id="week-shell-next" class="primary-action" type="button">Next</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Structured Session Shell (instruction page + placeholder assessment) -->
+      <section id="structured-session-shell" class="week-shell hidden">
+        <div class="week-card">
+          <div class="week-header">
+            <div>
+              <p class="eyebrow" id="structured-session-eyebrow">Structured Session</p>
+              <h1 id="structured-session-title" class="onboarding-title"></h1>
+              <p id="structured-session-subtitle" class="onboarding-subtitle"></p>
+            </div>
+          </div>
+
+          <div id="structured-session-content" class="onboarding-content"></div>
+          <p id="structured-session-validation" class="validation-message"></p>
+
+          <div class="onboarding-actions">
+            <button id="structured-session-back" class="secondary-action" type="button">Back to Dashboard</button>
+            <button id="structured-session-next" class="primary-action" type="button">Continue</button>
           </div>
         </div>
       </section>
@@ -186,81 +208,95 @@
             </div>
           </aside>
 
-          <section class="search-shell">
-            <p class="eyebrow">Exploratory Learning</p>
-            <!-- <h1>Browser Search Demo</h1>
-            <p class="intro">
-              This page mimics a familiar web search workflow while logging behavior
-              for research.
-            </p> -->
+          <section class="study-tools-shell" aria-label="Exploratory learning tools">
+            <nav class="tool-toggle-nav" aria-label="Search tool selection">
+              <button
+                id="browser-search-tab"
+                class="tool-toggle-button active"
+                type="button"
+                data-tool-tab="browser"
+                aria-controls="browser-search-panel"
+                aria-selected="true"
+              >
+                Browser Search
+              </button>
+              <button
+                id="ai-chat-search-tab"
+                class="tool-toggle-button"
+                type="button"
+                data-tool-tab="ai_chat"
+                aria-controls="ai-chat-search-panel"
+                aria-selected="false"
+              >
+                AI Chat Search
+              </button>
+            </nav>
 
-            <form id="search-form" class="search-form">
-              <label class="sr-only" for="query-input">Search query</label>
-              <input
-                id="query-input"
-                name="query"
-                type="text"
-                placeholder="Search the web..."
-                autocomplete="off"
-                required
-              />
-              <button type="submit">Search</button>
-            </form>
-
-            <!--<div class="meta-row">
-              <div>
-                <span class="meta-label">User ID</span>
-                <span id="user-id-display"></span>
-              </div>
-              <div>
-                <span class="meta-label">Session ID</span>
-                <span id="session-id-display"></span>
-              </div>
-            </div>-->
-
-            <p id="status-message" class="status-message"></p>
-
-            <section class="summary-panel">
+            <section id="browser-search-panel" class="tool-panel search-shell" data-tool-panel="browser">
               <div class="panel-header">
-                <h2>Search Summary</h2>
+                <h2>Browser Search</h2>
+                <span class="panel-tag">Web</span>
+              </div>
+
+              <form id="search-form" class="search-form">
+                <label class="sr-only" for="query-input">Search query</label>
+                <input
+                  id="query-input"
+                  name="query"
+                  type="text"
+                  placeholder="Search the web..."
+                  autocomplete="off"
+                  required
+                />
+                <button type="submit">Search</button>
+              </form>
+
+              <!--<div class="meta-row">
+                <div>
+                  <span class="meta-label">User ID</span>
+                  <span id="user-id-display"></span>
+                </div>
+                <div>
+                  <span class="meta-label">Session ID</span>
+                  <span id="session-id-display"></span>
+                </div>
+              </div>-->
+
+              <p id="status-message" class="status-message"></p>
+              <section id="results" class="results" aria-live="polite"></section>
+            </section>
+
+            <section id="ai-chat-search-panel" class="tool-panel chat-shell hidden" data-tool-panel="ai_chat">
+              <div class="panel-header">
+                <h2>AI Chat Search</h2>
                 <span class="panel-tag">Groq</span>
               </div>
-              <p id="summary-text" class="summary-text"></p>
-            </section>
 
-            <section id="results" class="results" aria-live="polite"></section>
+              <section class="keyword-panel">
+                <div class="keyword-header">
+                  <h3>Search Keywords</h3>
+                  <span class="keyword-caption">from search bar</span>
+                </div>
+                <div id="keyword-list" class="keyword-list">
+                  <span class="keyword-empty">Search for something to extract keywords.</span>
+                </div>
+              </section>
+
+              <section id="chat-messages" class="chat-messages" aria-live="polite"></section>
+
+              <form id="chat-form" class="chat-form">
+                <label class="sr-only" for="chat-input">Chat message</label>
+                <textarea
+                  id="chat-input"
+                  name="message"
+                  rows="3"
+                  placeholder="Ask a question..."
+                  required
+                ></textarea>
+                <button type="submit">Send</button>
+              </form>
+            </section>
           </section>
-
-          <aside class="chat-shell">
-            <div class="panel-header">
-              <h2>Study Chatbot</h2>
-              <span class="panel-tag">Groq</span>
-            </div>
-
-            <section class="keyword-panel">
-              <div class="keyword-header">
-                <h3>Search Keywords</h3>
-                <span class="keyword-caption">from search bar</span>
-              </div>
-              <div id="keyword-list" class="keyword-list">
-                <span class="keyword-empty">Search for something to extract keywords.</span>
-              </div>
-            </section>
-
-            <section id="chat-messages" class="chat-messages" aria-live="polite"></section>
-
-            <form id="chat-form" class="chat-form">
-              <label class="sr-only" for="chat-input">Chat message</label>
-              <textarea
-                id="chat-input"
-                name="message"
-                rows="3"
-                placeholder="Ask a question..."
-                required
-              ></textarea>
-              <button type="submit">Send</button>
-            </form>
-          </aside>
         </div>
 
         <!-- Micro-Check overlay -->
@@ -296,6 +332,26 @@
             </form>
           </div>
         </div>
+
+        <aside
+          id="quick-evaluation-popup"
+          class="quick-evaluation-popup hidden"
+          aria-live="polite"
+          aria-label="Quick evaluation"
+        >
+          <div class="quick-evaluation-header">
+            <p id="quick-evaluation-question" class="quick-evaluation-question"></p>
+            <button
+              id="quick-evaluation-dismiss"
+              class="quick-evaluation-dismiss"
+              type="button"
+              aria-label="Dismiss quick evaluation"
+            >
+              &times;
+            </button>
+          </div>
+          <div id="quick-evaluation-options" class="quick-evaluation-options"></div>
+        </aside>
       </section>
     </main>
 

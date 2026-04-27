@@ -4,6 +4,7 @@ import {
   initializeApp,
 } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
 import {
+  addDoc,
   collection,
   doc,
   getDocs,
@@ -128,4 +129,23 @@ export async function savePostTest(uid, answers) {
   const db = requireDb();
   const ref = doc(db, "users", uid, "assessments", "post_test");
   await setDoc(ref, { answers, submittedAt: serverTimestamp() }, { merge: true });
+}
+
+// Save structured session assessment answers to a sub-document for clean data separation.
+// weekId: e.g. "week1". answers: {questionId: answerValue, ...}
+export async function saveStructuredSession(uid, weekId, answers) {
+  const db = requireDb();
+  const ref = doc(db, "users", uid, "weeks", weekId, "structuredAssessment", "answers");
+  await setDoc(ref, { answers, submittedAt: serverTimestamp() }, { merge: true });
+}
+
+export async function saveQuickEvaluation(uid, payload) {
+  const db = requireDb();
+  const ref = collection(db, "users", uid, "quickEvaluations");
+
+  await addDoc(ref, {
+    ...payload,
+    userId: uid,
+    savedAt: serverTimestamp(),
+  });
 }

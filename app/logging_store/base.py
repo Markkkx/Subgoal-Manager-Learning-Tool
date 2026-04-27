@@ -25,5 +25,9 @@ class BaseEventLogger(ABC):
         pass
 
     @abstractmethod
+    def log_tool_switch(self, event: dict) -> None:
+        pass
+
+    @abstractmethod
     def get_all_events(self) -> dict:
         pass

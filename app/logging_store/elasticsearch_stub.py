@@ -31,6 +31,10 @@ class ElasticsearchEventLogger(BaseEventLogger):
         payload = self._build_payload(event, "chat")
         self.client.index(index=self.index_name, document=payload)
 
+    def log_tool_switch(self, event: dict) -> None:
+        payload = self._build_payload(event, "tool_switch")
+        self.client.index(index=self.index_name, document=payload)
+
     def get_all_events(self) -> dict:
         response = self.client.search(
             index=self.index_name,

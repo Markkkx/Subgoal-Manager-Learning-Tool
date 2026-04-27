@@ -180,6 +180,48 @@ def create_app() -> Flask:
         """Debug endpoint so the prototype is easy to inspect locally."""
         return jsonify(event_logger.get_all_events())
 
+    @app.post("/api/evaluation")
+    def evaluation():
+        payload = request.get_json(silent=True) or {}
+        required_fields = ["user_id", "session_id", "week", "session", "tool", "evaluation_event_type"]
+        missing_fields = [
+            field
+            for field in required_fields
+            if payload.get(field) in (None, "")
+        ]
+        if missing_fields:
+            return (
+                jsonify({"error": f"Missing required fields: {', '.join(missing_fields)}"}),
+                400,
+            )
+
+        if payload.get("rating") in (None, "") and payload.get("reason") in (None, ""):
+            return jsonify({"error": "rating or reason is required"}), 400
+
+        evaluation_event = {
+            "user_id": payload["user_id"],
+            "session_id": payload["session_id"],
+            "week": payload["week"],
+            "session": payload["session"],
+            "tool": payload["tool"],
+            "evaluation_event_type": payload["evaluation_event_type"],
+            "rating": payload.get("rating"),
+            "reason": payload.get("reason"),
+            "evaluation_timestamp": payload.get("evaluation_timestamp"),
+            "query_text": payload.get("query_text", ""),
+            "clicked_url": payload.get("clicked_url", ""),
+            "clicked_rank": payload.get("clicked_rank"),
+            "chat_question": payload.get("chat_question", ""),
+            "chat_answer": payload.get("chat_answer", ""),
+            "previous_tool": payload.get("previous_tool", ""),
+            "next_tool": payload.get("next_tool", ""),
+            "returned_at": payload.get("returned_at", ""),
+            "time_away_ms": payload.get("time_away_ms"),
+            "result_count": payload.get("result_count"),
+        }
+        event_logger.log_evaluation(evaluation_event)
+        return jsonify({"status": "ok"})
+
     @app.post("/api/chat")
     def chat():
         payload = request.get_json(silent=True) or {}

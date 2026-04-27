@@ -29,5 +29,9 @@ class BaseEventLogger(ABC):
         pass
 
     @abstractmethod
+    def log_evaluation(self, event: dict) -> None:
+        pass
+
+    @abstractmethod
     def get_all_events(self) -> dict:
         pass

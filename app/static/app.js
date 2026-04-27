@@ -103,6 +103,7 @@ let authMode = "login";
 let activeTool = "browser";
 let activeEvaluation = null;
 const evaluationQueue = [];
+let researchToolStateVersion = 0;
 
 const weekDefinitions = [
   { id: "week1", label: "Week 1" },
@@ -201,6 +202,8 @@ searchForm.addEventListener("submit", async (event) => {
     return;
   }
 
+  const requestVersion = researchToolStateVersion;
+  const requestUserId = currentUserId;
   currentQuery = queryText;
   statusMessage.textContent = "Searching...";
   resultsContainer.innerHTML = "";
@@ -218,6 +221,7 @@ searchForm.addEventListener("submit", async (event) => {
 
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Search request failed.");
+    if (requestVersion !== researchToolStateVersion || requestUserId !== currentUserId) return;
 
     renderResults(data.results);
     renderKeywords(data.keywords || []);
@@ -228,8 +232,13 @@ searchForm.addEventListener("submit", async (event) => {
       question: "How helpful were these results?",
       responseKey: "rating",
       options: createRatingOptions(),
+      metadata: {
+        queryText,
+        resultCount: data.results.length,
+      },
     });
   } catch (error) {
+    if (requestVersion !== researchToolStateVersion || requestUserId !== currentUserId) return;
     renderEmptyState("The search could not be completed.");
     renderKeywords([]);
     statusMessage.textContent = error.message;
@@ -249,6 +258,8 @@ chatForm.addEventListener("submit", async (event) => {
   const message = chatInput.value.trim();
   if (!message) return;
 
+  const requestVersion = researchToolStateVersion;
+  const requestUserId = currentUserId;
   appendChatMessage("user", message);
   chatHistory.push({ role: "user", content: message });
   chatInput.value = "";
@@ -267,6 +278,7 @@ chatForm.addEventListener("submit", async (event) => {
 
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Chat request failed.");
+    if (requestVersion !== researchToolStateVersion || requestUserId !== currentUserId) return;
 
     appendChatMessage("assistant", data.reply);
     chatHistory.push({ role: "assistant", content: data.reply });
@@ -276,8 +288,14 @@ chatForm.addEventListener("submit", async (event) => {
       question: "How useful was this answer?",
       responseKey: "rating",
       options: createRatingOptions(),
+      metadata: {
+        queryText: currentQuery,
+        chatQuestion: message,
+        chatAnswer: data.reply,
+      },
     });
   } catch (error) {
+    if (requestVersion !== researchToolStateVersion || requestUserId !== currentUserId) return;
     appendChatMessage("assistant", `Chat error: ${error.message}`);
   }
 });
@@ -481,6 +499,8 @@ structuredSessionNext.addEventListener("click", async () => {
 // ── Auth State Listener ───────────────────────────────────────────────────────
 onAuthReady((user) => {
   if (!user) {
+    resetResearchToolState();
+    currentUserId = "demo-user";
     showAuthView();
     return;
   }
@@ -1698,11 +1718,45 @@ async function submitQuickEvaluation(value) {
   responsePayload[evaluation.responseKey] = value;
 
   try {
+    await logQuickEvaluationToElasticsearch(responsePayload);
     await saveQuickEvaluation(currentUserId, responsePayload);
   } catch (error) {
     console.error("Quick evaluation save failed:", error);
   } finally {
     showNextQuickEvaluation();
+  }
+}
+
+async function logQuickEvaluationToElasticsearch(payload) {
+  const response = await fetch("/api/evaluation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: payload.userId,
+      session_id: payload.sessionId,
+      week: payload.week,
+      session: payload.session,
+      tool: payload.tool,
+      evaluation_event_type: payload.eventType,
+      rating: payload.rating,
+      reason: payload.reason,
+      evaluation_timestamp: payload.timestamp,
+      query_text: payload.queryText || "",
+      clicked_url: payload.clickedUrl || "",
+      clicked_rank: payload.clickedRank ?? null,
+      chat_question: payload.chatQuestion || "",
+      chat_answer: payload.chatAnswer || "",
+      previous_tool: payload.previousTool || "",
+      next_tool: payload.nextTool || "",
+      returned_at: payload.returnedAt || "",
+      time_away_ms: payload.timeAwayMs ?? null,
+      result_count: payload.resultCount ?? null,
+    }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.error || "Evaluation log request failed.");
   }
 }
 
@@ -2328,6 +2382,7 @@ function resetWeekFlowState() {
 }
 
 function resetResearchToolState() {
+  researchToolStateVersion += 1;
   currentQuery = "";
   chatHistory.length = 0;
   pendingReturnContext = null;

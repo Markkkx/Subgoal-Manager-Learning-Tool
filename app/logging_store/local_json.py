@@ -67,6 +67,16 @@ class LocalJsonEventLogger(BaseEventLogger):
         data["tool_switch_events"].append(payload)
         self._write(data)
 
+    def log_evaluation(self, event: dict) -> None:
+        payload = {
+            **event,
+            "event_type": "evaluation",
+            "timestamp": self._utc_timestamp(),
+        }
+        data = self._read()
+        data["evaluation_events"].append(payload)
+        self._write(data)
+
     def get_all_events(self) -> dict:
         return self._read()
 
@@ -80,6 +90,7 @@ class LocalJsonEventLogger(BaseEventLogger):
                     "return_events": [],
                     "chat_events": [],
                     "tool_switch_events": [],
+                    "evaluation_events": [],
                 }
             )
 
@@ -91,6 +102,7 @@ class LocalJsonEventLogger(BaseEventLogger):
             data.setdefault("return_events", [])
             data.setdefault("chat_events", [])
             data.setdefault("tool_switch_events", [])
+            data.setdefault("evaluation_events", [])
             return data
 
     def _write(self, data: dict) -> None:

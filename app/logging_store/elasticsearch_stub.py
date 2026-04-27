@@ -35,6 +35,10 @@ class ElasticsearchEventLogger(BaseEventLogger):
         payload = self._build_payload(event, "tool_switch")
         self.client.index(index=self.index_name, document=payload)
 
+    def log_evaluation(self, event: dict) -> None:
+        payload = self._build_payload(event, "evaluation")
+        self.client.index(index=self.index_name, document=payload)
+
     def get_all_events(self) -> dict:
         response = self.client.search(
             index=self.index_name,

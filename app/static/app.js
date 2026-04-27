@@ -559,6 +559,7 @@ function showStructuredSessionView() {
 
 function showAppView() {
   hideAllShells();
+  resetResearchToolState();
   appShell.classList.remove("hidden");
   startCountdown(weekFlowState.sessionTimeRemaining);
   renderSubgoalSidebar();
@@ -575,6 +576,7 @@ async function handleAuthenticatedUser(user) {
   resetOnboardingState();
   resetDashboardState();
   resetWeekFlowState();
+  resetResearchToolState();
   currentUserId = user.uid;
   if (userIdDisplay) userIdDisplay.textContent = currentUserId;
   authUserDisplay.textContent = user.email || user.uid;
@@ -1582,9 +1584,10 @@ async function logClickEvent(payload) {
   }
 }
 
-function setActiveTool(nextTool) {
+function setActiveTool(nextTool, options = {}) {
   if (!nextTool || nextTool === activeTool) return;
 
+  const { logSwitch = true, promptReason = true } = options;
   const previousTool = activeTool;
   activeTool = nextTool;
 
@@ -1598,26 +1601,30 @@ function setActiveTool(nextTool) {
     panel.classList.toggle("hidden", panel.dataset.toolPanel !== nextTool);
   });
 
-  logToolSwitch(previousTool, nextTool).catch((error) => {
-    console.error("Tool switch log failed:", error);
-  });
+  if (logSwitch) {
+    logToolSwitch(previousTool, nextTool).catch((error) => {
+      console.error("Tool switch log failed:", error);
+    });
+  }
 
-  enqueueQuickEvaluation({
-    eventType: "tool_switch_reason",
-    tool: nextTool,
-    question: "Why did you switch tools?",
-    responseKey: "reason",
-    options: [
-      { label: "Need broader sources", value: "need_broader_sources" },
-      { label: "Need an explanation", value: "need_explanation" },
-      { label: "Verify or compare", value: "verify_or_compare" },
-      { label: "Current tool was not enough", value: "current_tool_not_enough" },
-    ],
-    metadata: {
-      previousTool,
-      nextTool,
-    },
-  });
+  if (promptReason) {
+    enqueueQuickEvaluation({
+      eventType: "tool_switch_reason",
+      tool: nextTool,
+      question: "Why did you switch tools?",
+      responseKey: "reason",
+      options: [
+        { label: "Need broader sources", value: "need_broader_sources" },
+        { label: "Need an explanation", value: "need_explanation" },
+        { label: "Verify or compare", value: "verify_or_compare" },
+        { label: "Current tool was not enough", value: "current_tool_not_enough" },
+      ],
+      metadata: {
+        previousTool,
+        nextTool,
+      },
+    });
+  }
 }
 
 async function logToolSwitch(previousTool, nextTool) {
@@ -2318,6 +2325,28 @@ function resetWeekFlowState() {
   weekFlowState.subgoals = createDefaultWeekSubgoals();
   weekFlowState.currentSessionIndex = 0;
   weekFlowState.sessionTimeRemaining = 25 * 60;
+}
+
+function resetResearchToolState() {
+  currentQuery = "";
+  chatHistory.length = 0;
+  pendingReturnContext = null;
+  leftMainPageAt = null;
+  returnLogged = false;
+  activeEvaluation = null;
+  evaluationQueue.length = 0;
+
+  if (queryInput) queryInput.value = "";
+  if (chatInput) chatInput.value = "";
+  if (resultsContainer) resultsContainer.innerHTML = "";
+  if (chatMessages) chatMessages.innerHTML = "";
+  if (statusMessage) statusMessage.textContent = "";
+  if (keywordList) {
+    keywordList.innerHTML =
+      '<span class="keyword-empty">Search for something to extract keywords.</span>';
+  }
+  if (quickEvaluationPopup) quickEvaluationPopup.classList.add("hidden");
+  setActiveTool("browser", { logSwitch: false, promptReason: false });
 }
 
 // ── Week Completion / Unlocking ───────────────────────────────────────────────

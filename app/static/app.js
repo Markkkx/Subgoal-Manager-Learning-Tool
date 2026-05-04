@@ -78,6 +78,13 @@ const searchForm = document.getElementById("search-form");
 const queryInput = document.getElementById("query-input");
 const resultsContainer = document.getElementById("results");
 const statusMessage = document.getElementById("status-message");
+const browserSearchPanel = document.getElementById("browser-search-panel");
+const readingPanel = document.getElementById("reading-panel");
+const readingPanelTitle = document.getElementById("reading-panel-title");
+const readingPanelUrl = document.getElementById("reading-panel-url");
+const readingPanelOpenTab = document.getElementById("reading-panel-open-tab");
+const readingPanelClose = document.getElementById("reading-panel-close");
+const readingFrame = document.getElementById("reading-frame");
 const userIdDisplay = document.getElementById("user-id-display");
 const sessionIdDisplay = document.getElementById("session-id-display");
 const chatForm = document.getElementById("chat-form");
@@ -104,6 +111,8 @@ let activeTool = "browser";
 let activeEvaluation = null;
 const evaluationQueue = [];
 let researchToolStateVersion = 0;
+let activeReadingPanelUrl = "";
+let activeReadingPanelRequest = 0;
 
 const weekDefinitions = [
   { id: "week1", label: "Week 1" },
@@ -207,6 +216,7 @@ searchForm.addEventListener("submit", async (event) => {
   currentQuery = queryText;
   statusMessage.textContent = "Searching...";
   resultsContainer.innerHTML = "";
+  hideReadingPanel();
 
   try {
     const response = await fetch("/api/search", {
@@ -306,6 +316,18 @@ window.addEventListener("focus", async () => {
 
 if (quickEvaluationDismiss) {
   quickEvaluationDismiss.addEventListener("click", dismissQuickEvaluation);
+}
+
+if (readingPanelClose) {
+  readingPanelClose.addEventListener("click", closeReadingPanel);
+}
+
+if (readingPanelOpenTab) {
+  readingPanelOpenTab.addEventListener("click", () => {
+    if (activeReadingPanelUrl) {
+      window.open(activeReadingPanelUrl, "_blank", "noopener,noreferrer");
+    }
+  });
 }
 
 // ── Auth UI ───────────────────────────────────────────────────────────────────
@@ -1545,7 +1567,7 @@ function renderResults(results) {
       } catch (error) {
         console.error("Click log failed:", error);
       } finally {
-        window.open(result.url, "_blank", "noopener,noreferrer");
+        openResultInReadingPanel(result);
       }
     });
 
@@ -1562,6 +1584,92 @@ function renderResults(results) {
     card.appendChild(snippet);
     resultsContainer.appendChild(card);
   });
+}
+
+async function openResultInReadingPanel(result) {
+  if (!readingPanel || !readingFrame) {
+    window.open(result.url, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  const requestId = activeReadingPanelRequest + 1;
+  activeReadingPanelRequest = requestId;
+  activeReadingPanelUrl = result.url;
+
+  if (readingPanelTitle) readingPanelTitle.textContent = result.title || "Reading Panel";
+  if (readingPanelUrl) readingPanelUrl.textContent = result.url;
+  readingPanel.classList.remove("hidden");
+  if (browserSearchPanel) browserSearchPanel.classList.add("reading-panel-active");
+  if (pendingReturnContext && !leftMainPageAt) {
+    leftMainPageAt = new Date();
+    returnLogged = false;
+  }
+  statusMessage.textContent = "Opening result in the reading panel...";
+
+  let loaded = false;
+  const timeoutId = window.setTimeout(() => {
+    if (requestId === activeReadingPanelRequest && !loaded) {
+      openReadingPanelFallback(result.url, "The page did not load in the reading panel.");
+    }
+  }, 6000);
+
+  readingFrame.onload = () => {
+    if (requestId !== activeReadingPanelRequest) return;
+    loaded = true;
+    window.clearTimeout(timeoutId);
+    statusMessage.textContent = "Result opened in the reading panel.";
+  };
+  readingFrame.src = result.url;
+
+  try {
+    const response = await fetch("/api/embed-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: result.url }),
+    });
+    const data = await response.json();
+    if (requestId !== activeReadingPanelRequest) return;
+    if (response.ok && !data.can_embed) {
+      window.clearTimeout(timeoutId);
+      openReadingPanelFallback(result.url, "The page refused to load in the reading panel.");
+    } else if (!response.ok) {
+      console.warn("Embed check returned an error:", data.error || data.reason || response.status);
+    }
+  } catch (error) {
+    console.error("Embed check failed:", error);
+  }
+}
+
+function openReadingPanelFallback(url, message) {
+  activeReadingPanelRequest += 1;
+  leftMainPageAt = null;
+  returnLogged = false;
+  if (readingFrame) {
+    readingFrame.onload = null;
+    readingFrame.removeAttribute("src");
+  }
+  if (readingPanel) readingPanel.classList.add("hidden");
+  if (browserSearchPanel) browserSearchPanel.classList.remove("reading-panel-active");
+  statusMessage.textContent = `${message} Opening it in a new tab.`;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function hideReadingPanel() {
+  activeReadingPanelRequest += 1;
+  activeReadingPanelUrl = "";
+  if (readingFrame) {
+    readingFrame.onload = null;
+    readingFrame.removeAttribute("src");
+  }
+  if (readingPanel) readingPanel.classList.add("hidden");
+  if (browserSearchPanel) browserSearchPanel.classList.remove("reading-panel-active");
+}
+
+async function closeReadingPanel() {
+  hideReadingPanel();
+  if (pendingReturnContext && leftMainPageAt) {
+    await tryLogReturnEvent();
+  }
 }
 
 function renderKeywords(keywords) {

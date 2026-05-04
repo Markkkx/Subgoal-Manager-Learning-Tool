@@ -1,8 +1,10 @@
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
+import requests as http_requests
 
 from app.config import Config
 from app.logging_store.base import BaseEventLogger
@@ -137,6 +139,42 @@ def create_app() -> Flask:
         event_logger.log_click(click_event)
         return jsonify({"status": "ok"})
 
+    @app.post("/api/embed-check")
+    def embed_check():
+        payload = request.get_json(silent=True) or {}
+        target_url = (payload.get("url") or "").strip()
+        parsed_target = urlparse(target_url)
+
+        if parsed_target.scheme not in ("http", "https") or not parsed_target.netloc:
+            return jsonify({"can_embed": False, "reason": "invalid_url"}), 400
+
+        try:
+            response = http_requests.head(
+                target_url,
+                allow_redirects=True,
+                timeout=5,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            if response.status_code in (405, 403) or not response.headers:
+                response = http_requests.get(
+                    target_url,
+                    allow_redirects=True,
+                    timeout=5,
+                    stream=True,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+        except http_requests.RequestException as exc:
+            return jsonify({"can_embed": False, "reason": "request_failed", "detail": str(exc)}), 502
+
+        blocker = get_frame_blocker(response.headers, request.host_url, response.url)
+        return jsonify(
+            {
+                "can_embed": blocker is None,
+                "reason": blocker,
+                "final_url": response.url,
+            }
+        )
+
     @app.post("/api/return")
     def log_return():
         payload = request.get_json(silent=True) or {}
@@ -260,6 +298,50 @@ def create_app() -> Flask:
         return jsonify({"reply": reply})
 
     return app
+
+
+def get_frame_blocker(headers, host_url: str, target_url: str) -> str | None:
+    """Return the header policy that would block this app from framing a page."""
+    app_origin = get_origin(host_url)
+    target_origin = get_origin(target_url)
+    x_frame_options = headers.get("X-Frame-Options", "").lower()
+    if x_frame_options:
+        if "deny" in x_frame_options:
+            return "x_frame_options_deny"
+        if "sameorigin" in x_frame_options and app_origin != target_origin:
+            return "x_frame_options_sameorigin"
+        if "allow-from" in x_frame_options and app_origin not in x_frame_options:
+            return "x_frame_options_allow_from"
+
+    content_security_policy = headers.get("Content-Security-Policy", "")
+    frame_ancestors = parse_frame_ancestors(content_security_policy)
+    if frame_ancestors is None:
+        return None
+    if "'none'" in frame_ancestors:
+        return "csp_frame_ancestors_none"
+    if "*" in frame_ancestors:
+        return None
+
+    if "'self'" in frame_ancestors and app_origin != target_origin:
+        return "csp_frame_ancestors_self"
+    if app_origin and app_origin in frame_ancestors:
+        return None
+    return "csp_frame_ancestors"
+
+
+def parse_frame_ancestors(content_security_policy: str) -> set[str] | None:
+    for directive in content_security_policy.split(";"):
+        parts = directive.strip().split()
+        if parts and parts[0].lower() == "frame-ancestors":
+            return set(parts[1:])
+    return None
+
+
+def get_origin(url: str) -> str:
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def build_event_logger(config: dict) -> BaseEventLogger:

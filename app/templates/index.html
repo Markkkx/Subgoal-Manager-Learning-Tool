@@ -263,6 +263,24 @@
               </div>-->
 
               <p id="status-message" class="status-message"></p>
+              <section id="reading-panel" class="reading-panel hidden" aria-label="Embedded reading panel">
+                <div class="reading-panel-header">
+                  <div class="reading-panel-title-wrap">
+                    <h3 id="reading-panel-title">Reading Panel</h3>
+                    <p id="reading-panel-url" class="reading-panel-url"></p>
+                  </div>
+                  <div class="reading-panel-actions">
+                    <button id="reading-panel-open-tab" type="button" aria-label="Open page in a new tab">↗</button>
+                    <button id="reading-panel-close" type="button" aria-label="Close reading panel">×</button>
+                  </div>
+                </div>
+                <iframe
+                  id="reading-frame"
+                  class="reading-frame"
+                  title="Selected search result"
+                  referrerpolicy="no-referrer-when-downgrade"
+                ></iframe>
+              </section>
               <section id="results" class="results" aria-live="polite"></section>
             </section>
 

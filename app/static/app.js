@@ -226,17 +226,6 @@ searchForm.addEventListener("submit", async (event) => {
     renderResults(data.results);
     renderKeywords(data.keywords || []);
     statusMessage.textContent = `Showing ${data.results.length} result(s) for "${queryText}".`;
-    enqueueQuickEvaluation({
-      eventType: "browser_search_results_loaded",
-      tool: "browser",
-      question: "How helpful were these results?",
-      responseKey: "rating",
-      options: createRatingOptions(),
-      metadata: {
-        queryText,
-        resultCount: data.results.length,
-      },
-    });
   } catch (error) {
     if (requestVersion !== researchToolStateVersion || requestUserId !== currentUserId) return;
     renderEmptyState("The search could not be completed.");
@@ -1784,10 +1773,12 @@ function getActiveEvaluationSession() {
 async function tryLogReturnEvent() {
   if (!pendingReturnContext || !leftMainPageAt || returnLogged) return;
 
+  returnLogged = true;
   const returnContext = { ...pendingReturnContext };
+  pendingReturnContext = null;
   const returnedAt = new Date();
   const timeAwayMs = returnedAt.getTime() - leftMainPageAt.getTime();
-  if (timeAwayMs < 0) return;
+  if (timeAwayMs < 0) { leftMainPageAt = null; return; }
 
   try {
     const response = await fetch("/api/return", {
@@ -1809,8 +1800,6 @@ async function tryLogReturnEvent() {
       throw new Error(data.error || "Return log request failed.");
     }
 
-    returnLogged = true;
-    pendingReturnContext = null;
     leftMainPageAt = null;
     enqueueQuickEvaluation({
       eventType: "browser_result_returned",

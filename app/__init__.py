@@ -69,11 +69,13 @@ def create_app() -> Flask:
             event_logger.log_search(search_event)
 
         try:
-            results = search_service.search(query_text, start=start, num=num)
+            search_page = search_service.search(query_text, start=start, num=num)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 500
         except RuntimeError as exc:
             return jsonify({"error": str(exc)}), 502
+
+        results = search_page["results"]
 
         keywords = []
         if chat_service.is_enabled():
@@ -88,8 +90,8 @@ def create_app() -> Flask:
             {
                 "query_text": query_text,
                 "results": results,
-                "next_start": start + len(results),
-                "has_more": len(results) == num,
+                "next_start": search_page["next_start"],
+                "has_more": search_page["has_more"],
                 "keywords": keywords,
             }
         )

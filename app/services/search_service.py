@@ -1,4 +1,5 @@
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import requests
 
@@ -11,7 +12,7 @@ class SearchService:
         self.engine = engine
         self.base_url = "https://serpapi.com/search.json"
 
-    def search(self, query_text: str, start: int = 0, num: int = 20) -> list[dict[str, Any]]:
+    def search(self, query_text: str, start: int = 0, num: int = 20) -> dict[str, Any]:
         if not self.api_key:
             raise ValueError(
                 "SERPAPI_KEY is missing. Add it to your .env file before running searches."
@@ -48,4 +49,26 @@ class SearchService:
                 }
             )
 
-        return normalized_results
+        next_start = extract_next_start(data.get("serpapi_pagination", {}))
+
+        return {
+            "results": normalized_results,
+            "next_start": next_start,
+            "has_more": next_start is not None,
+        }
+
+
+def extract_next_start(pagination: dict[str, Any]) -> int | None:
+    next_url = pagination.get("next") or pagination.get("next_link")
+    if not next_url:
+        return None
+
+    query = parse_qs(urlparse(next_url).query)
+    start_values = query.get("start")
+    if not start_values:
+        return None
+
+    try:
+        return int(start_values[0])
+    except ValueError:
+        return None

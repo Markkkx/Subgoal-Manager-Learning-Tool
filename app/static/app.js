@@ -113,6 +113,10 @@ const evaluationQueue = [];
 let researchToolStateVersion = 0;
 let activeReadingPanelUrl = "";
 let activeReadingPanelRequest = 0;
+const SEARCH_PAGE_SIZE = 20;
+let searchNextStart = 0;
+let searchHasMore = false;
+let searchLoadingMore = false;
 
 const weekDefinitions = [
   { id: "week1", label: "Week 1" },
@@ -214,28 +218,22 @@ searchForm.addEventListener("submit", async (event) => {
   const requestVersion = researchToolStateVersion;
   const requestUserId = currentUserId;
   currentQuery = queryText;
+  searchNextStart = 0;
+  searchHasMore = false;
   statusMessage.textContent = "Searching...";
   resultsContainer.innerHTML = "";
   hideReadingPanel();
 
   try {
-    const response = await fetch("/api/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        user_id: currentUserId,
-        session_id: sessionId,
-        query_text: queryText,
-      }),
-    });
-
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Search request failed.");
+    const data = await fetchSearchResults(queryText, 0);
     if (requestVersion !== researchToolStateVersion || requestUserId !== currentUserId) return;
 
     renderResults(data.results);
     renderKeywords(data.keywords || []);
-    statusMessage.textContent = `Showing ${data.results.length} result(s) for "${queryText}".`;
+    searchNextStart = data.next_start ?? data.results.length;
+    searchHasMore = Boolean(data.has_more);
+    renderLoadMoreButton();
+    statusMessage.textContent = `Showing ${searchNextStart} result(s) for "${queryText}".`;
   } catch (error) {
     if (requestVersion !== researchToolStateVersion || requestUserId !== currentUserId) return;
     renderEmptyState("The search could not be completed.");
@@ -243,6 +241,24 @@ searchForm.addEventListener("submit", async (event) => {
     statusMessage.textContent = error.message;
   }
 });
+
+async function fetchSearchResults(queryText, start) {
+  const response = await fetch("/api/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: currentUserId,
+      session_id: sessionId,
+      query_text: queryText,
+      start,
+      num: SEARCH_PAGE_SIZE,
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Search request failed.");
+  return data;
+}
 
 toolToggleButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -1528,13 +1544,13 @@ function stopCountdown() {
 }
 
 // ── Search Results / Summary / Keywords ──────────────────────────────────────
-function renderResults(results) {
+function renderResults(results, options = {}) {
   if (!results.length) {
-    renderEmptyState("No results were returned for this query.");
+    if (!options.append) renderEmptyState("No results were returned for this query.");
     return;
   }
 
-  resultsContainer.innerHTML = "";
+  if (!options.append) resultsContainer.innerHTML = "";
 
   results.forEach((result) => {
     const card = document.createElement("article");
@@ -1584,6 +1600,49 @@ function renderResults(results) {
     card.appendChild(snippet);
     resultsContainer.appendChild(card);
   });
+}
+
+function renderLoadMoreButton() {
+  const existingButton = document.getElementById("load-more-results");
+  if (existingButton) existingButton.remove();
+  if (!searchHasMore || !currentQuery) return;
+
+  const button = document.createElement("button");
+  button.id = "load-more-results";
+  button.className = "load-more-results";
+  button.type = "button";
+  button.textContent = searchLoadingMore ? "Loading..." : "Load more results";
+  button.disabled = searchLoadingMore;
+  button.addEventListener("click", loadMoreSearchResults);
+  resultsContainer.appendChild(button);
+}
+
+async function loadMoreSearchResults() {
+  if (searchLoadingMore || !searchHasMore || !currentQuery) return;
+
+  const requestVersion = researchToolStateVersion;
+  const requestUserId = currentUserId;
+  searchLoadingMore = true;
+  renderLoadMoreButton();
+  statusMessage.textContent = "Loading more results...";
+
+  try {
+    const data = await fetchSearchResults(currentQuery, searchNextStart);
+    if (requestVersion !== researchToolStateVersion || requestUserId !== currentUserId) return;
+
+    searchNextStart = data.next_start ?? searchNextStart + data.results.length;
+    searchHasMore = Boolean(data.has_more) && data.results.length > 0;
+    renderResults(data.results, { append: true });
+    statusMessage.textContent = `Showing ${searchNextStart} result(s) for "${currentQuery}".`;
+  } catch (error) {
+    if (requestVersion !== researchToolStateVersion || requestUserId !== currentUserId) return;
+    statusMessage.textContent = error.message;
+  } finally {
+    if (requestVersion === researchToolStateVersion && requestUserId === currentUserId) {
+      searchLoadingMore = false;
+      renderLoadMoreButton();
+    }
+  }
 }
 
 async function openResultInReadingPanel(result) {
@@ -2482,6 +2541,9 @@ function resetResearchToolState() {
   researchToolStateVersion += 1;
   currentQuery = "";
   chatHistory.length = 0;
+  searchNextStart = 0;
+  searchHasMore = false;
+  searchLoadingMore = false;
   pendingReturnContext = null;
   leftMainPageAt = null;
   returnLogged = false;

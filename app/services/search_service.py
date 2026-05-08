@@ -11,7 +11,7 @@ class SearchService:
         self.engine = engine
         self.base_url = "https://serpapi.com/search.json"
 
-    def search(self, query_text: str) -> list[dict[str, Any]]:
+    def search(self, query_text: str, start: int = 0, num: int = 20) -> list[dict[str, Any]]:
         if not self.api_key:
             raise ValueError(
                 "SERPAPI_KEY is missing. Add it to your .env file before running searches."
@@ -23,6 +23,8 @@ class SearchService:
                 "q": query_text,
                 "engine": self.engine,
                 "api_key": self.api_key,
+                "start": start,
+                "num": num,
             },
             timeout=20,
         )
@@ -36,7 +38,7 @@ class SearchService:
         organic_results = data.get("organic_results", [])
 
         normalized_results: list[dict[str, Any]] = []
-        for index, item in enumerate(organic_results, start=1):
+        for index, item in enumerate(organic_results, start=start + 1):
             normalized_results.append(
                 {
                     "rank": index,

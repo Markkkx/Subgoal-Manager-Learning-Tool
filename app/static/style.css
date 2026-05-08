@@ -1407,6 +1407,29 @@ h1 {
   line-height: 1.5;
 }
 
+.load-more-results {
+  justify-self: center;
+  min-width: 180px;
+  padding: 12px 18px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: white;
+  color: var(--accent-dark);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.load-more-results:hover:not(:disabled) {
+  background: var(--accent);
+  color: white;
+}
+
+.load-more-results:disabled {
+  cursor: progress;
+  opacity: 0.68;
+}
+
 .reading-panel {
   display: flex;
   flex-direction: column;

@@ -50,6 +50,8 @@ def create_app() -> Flask:
         query_text = (payload.get("query_text") or "").strip()
         user_id = (payload.get("user_id") or "demo-user").strip()
         session_id = (payload.get("session_id") or "").strip()
+        start = parse_nonnegative_int(payload.get("start"), default=0)
+        num = parse_positive_int(payload.get("num"), default=20, maximum=20)
 
         if not query_text:
             return jsonify({"error": "query_text is required"}), 400
@@ -57,16 +59,17 @@ def create_app() -> Flask:
         if not session_id:
             return jsonify({"error": "session_id is required"}), 400
 
-        search_event = {
-            "user_id": user_id,
-            "session_id": session_id,
-            "search_mode": "browser",
-            "query_text": query_text,
-        }
-        event_logger.log_search(search_event)
+        if start == 0:
+            search_event = {
+                "user_id": user_id,
+                "session_id": session_id,
+                "search_mode": "browser",
+                "query_text": query_text,
+            }
+            event_logger.log_search(search_event)
 
         try:
-            results = search_service.search(query_text)
+            results = search_service.search(query_text, start=start, num=num)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 500
         except RuntimeError as exc:
@@ -85,6 +88,8 @@ def create_app() -> Flask:
             {
                 "query_text": query_text,
                 "results": results,
+                "next_start": start + len(results),
+                "has_more": len(results) == num,
                 "keywords": keywords,
             }
         )
@@ -342,6 +347,22 @@ def get_origin(url: str) -> str:
     if not parsed.scheme or not parsed.netloc:
         return ""
     return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def parse_nonnegative_int(value, default: int = 0) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(parsed, 0)
+
+
+def parse_positive_int(value, default: int = 20, maximum: int = 20) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return min(max(parsed, 1), maximum)
 
 
 def build_event_logger(config: dict) -> BaseEventLogger:

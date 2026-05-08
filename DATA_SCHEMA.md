@@ -10,26 +10,27 @@ Main user/profile document. Written by `saveUserOnboarding()` and `saveUserStudy
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `onboardingStep` | string | Current onboarding step, e.g. `welcome`, `consent`, `demographics`, `quiz`, `subgoals`, `complete`. |
+| `onboardingStep` | string | Current onboarding step, e.g. `welcome`, `consent`, `demographics`, `quiz`. |
 | `onboardingCompleted` | boolean | Whether Week 0 onboarding is complete. |
 | `consentAgreed` | boolean | Consent checkbox state. |
-| `demographics` | map | Basic demographics and technology familiarity fields. |
-| `demographics.ageRange` | string | e.g. `18-24`. |
-| `demographics.primaryLanguage` | string | User-entered language. |
+| `demographics` | map | Basic demographics and tool-use frequency fields. |
+| `demographics.gender` | string | `Female`, `Male`, `Non-binary`, or `Prefer not to share`. |
+| `demographics.age` | string | Age from 18 to 85. |
 | `demographics.educationLevel` | string | Selected education level. |
-| `demographics.searchEngineFamiliarity` | string | 1-7 range value. |
-| `demographics.conversationalAiFamiliarity` | string | 1-7 range value. |
-| `demographics.technologyUsageFrequency` | string | e.g. `Daily`, `Weekly`. |
+| `demographics.nativeLanguageEnglish` | string | `Yes` or `No`. |
+| `demographics.englishLearningStartAge` | string | Required when native language is not English. |
+| `demographics.searchEngineUseFrequency` | string | Search engine use frequency option. |
+| `demographics.conversationalAiUseFrequency` | string | Conversational AI tool use frequency option. |
 | `baselineQuizAnswers` | map | Baseline quiz answers keyed by question id. |
 | `assignedCondition` | string | Study condition label. |
 | `currentWeek` | string | e.g. `week1`. |
-| `currentSession` | string | `structured` or `exploratory`. |
+| `currentSession` | string | `session1` or `session2`. |
 | `weekProgress` | map | Summary status for each week. |
 | `updatedAt` | timestamp | Firestore server timestamp. |
 
 ### `users/{uid}/week0/subgoals`
 
-Initial Week 0 sub-goal planning document. Written by `saveWeek0Subgoals()`.
+Legacy initial Week 0 sub-goal planning document. Existing data is kept, but the updated onboarding flow no longer writes this document.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -56,32 +57,62 @@ Per-week progress document. `weekId` is normally `week1`, `week2`, `week3`, or `
 | `structuredStatus` | string | `not_started`, `in_progress`, or `completed`. |
 | `structuredStartedAt` | string/null | ISO timestamp when structured session starts. |
 | `structuredCompletedAt` | string/null | ISO timestamp when structured session completes. |
-| `structuredStep` | string | e.g. `instructions` or `assessment`. |
-| `structuredMaterialsChecked` | boolean | Whether assigned materials were confirmed. |
-| `structuredAssessmentAnswers` | map | Structured assessment answers keyed by question id. |
+| `structuredStep` | string | `video`, `learning`, `outcome`, or `completed`. |
 | `exploratoryStatus` | string | `not_started`, `in_progress`, or `completed`. |
 | `exploratoryStartedAt` | string/null | ISO timestamp when exploratory session starts. |
 | `exploratoryCompletedAt` | string/null | ISO timestamp when exploratory session completes. |
 | `status` | string | Legacy/general week status. |
-| `delayedTestCompleted` | boolean | Whether delayed test is complete. Week 1 is treated as complete by default. |
-| `subgoalsCompleted` | boolean | Whether weekly sub-goal planning is complete. |
-| `delayedTestAnswers` | map | Delayed-test answers keyed by question id. Empty for Week 1. |
-| `subgoals` | array | Three weekly sub-goal objects. |
-| `currentSessionIndex` | number | Exploratory sub-session index, 0-2. |
-| `sessionTimeRemaining` | number | Timer value in seconds. |
-| `sessions` | array | Legacy micro-check/session records. |
+| `subgoalsCompleted` | boolean | Whether Session 2 goal planning is complete. |
+| `subgoals` | array | Session 2 goal text objects. Goal 1 is required; Goals 2 and 3 are optional. |
+| `sessions` | map | New 8-session progress records keyed by `week1_session1` through `week4_session2`. |
 | `sessionsCompleted` | boolean | Legacy completion flag. |
 | `updatedAt` | timestamp | Firestore server timestamp. |
+
+Each `sessions.{weekId_sessionN}` item includes:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `sessionId` | string | e.g. `week1_session1`. |
+| `status` | string | `not_started`, `in_progress`, or `completed`. |
+| `videoCompleted` | boolean/null | Session 1 only. |
+| `goalPlanningCompleted` | boolean/null | Session 2 only. |
+| `learningStartedAt` | string/null | ISO timestamp. |
+| `learningCompletedAt` | string/null | ISO timestamp. |
+| `learningOutcomeCompleted` | boolean | Whether summary and comprehension questions were submitted. |
+| `updatedAt` | string/null | Client ISO timestamp for progress updates. |
 
 Each weekly `subgoals[]` item may include:
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `question` | string | Weekly sub-goal question. |
-| `type` | string | Goal type. |
-| `importance` | string | 1-7 range value. |
-| `confidence` | string | 1-7 range value. |
 | `status` | string | Sidebar status such as `not_started`, `in_progress`, `completed`. |
+
+### `users/{uid}/weeks/{weekId}.goalPlanning`
+
+Session 2 goal planning map saved inside the existing week progress document to use the same Firestore permissions path.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `weekId` | string | e.g. `week1`. |
+| `sessionId` | string | e.g. `week1_session2`. |
+| `learningGoalStatement` | string | Placeholder now; real text can later load from Firestore. |
+| `goals` | array | Goal 1 required; Goals 2 and 3 optional. |
+| `submittedAt` | timestamp | Firestore server timestamp. |
+
+### `users/{uid}/learningOutcomes/{autoId}`
+
+Learning outcome document for both Session 1 and Session 2. Written by `saveLearningOutcome()`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `summary` | string | Participant summary, minimum 50 words. |
+| `wordCount` | number | Summary word count. |
+| `comprehensionAnswers` | map | Placeholder comprehension answers keyed by question id. |
+| `sessionId` | string | e.g. `week1_session1`. |
+| `weekId` | string | e.g. `week1`. |
+| `userId` | string | Firebase user uid. |
+| `timestamp` | timestamp | Firestore server timestamp. |
 
 ### `users/{uid}/weeks/{weekId}/structuredAssessment/answers`
 
@@ -109,12 +140,12 @@ Backup copy of quick evaluation responses. The primary analytics copy is now als
 | --- | --- | --- |
 | `userId` | string | Firebase user uid. |
 | `week` | string | Active week, e.g. `week1`. |
-| `session` | string | Active session label, e.g. `exploratory_1`. |
+| `session` | string | Active session label, e.g. `week1_session2`. |
 | `sessionId` | string | Browser-generated app session UUID. |
 | `tool` | string | `browser` or `ai_chat`. |
 | `eventType` | string | Frontend evaluation trigger. |
-| `rating` | number | Present for 1-5 rating events. |
-| `reason` | string | Present for tool-switch reason events. |
+| `ratings` | map | Three 1-5 ratings: `newInformation`, `readability`, and `learning`. |
+| `sourceType` | string | `web_page` or `chatbot_response`. |
 | `timestamp` | string | Client-side ISO timestamp. |
 | `queryText` | string | Optional search query context. |
 | `clickedUrl` | string | Optional clicked browser result URL. |
@@ -154,7 +185,7 @@ Every Elasticsearch document gets:
 
 ### `event_type: search`
 
-Written when the user submits a Browser Search query.
+Written when the user submits a Web Search query.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -216,7 +247,7 @@ Note: the normal `chat` event currently logs the user question before the assist
 
 ### `event_type: tool_switch`
 
-Written when the user switches between Browser Search and AI Chat Search.
+Written silently when the user switches between Web Search and AI Chat Search.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -230,7 +261,7 @@ Written when the user switches between Browser Search and AI Chat Search.
 
 ### `event_type: evaluation`
 
-Written when the user answers a quick evaluation prompt. This is the main Elasticsearch schema for ratings and switch reasons.
+Written when the user answers a quick evaluation prompt. This is the main Elasticsearch schema for page and chatbot response ratings.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -239,19 +270,20 @@ Written when the user answers a quick evaluation prompt. This is the main Elasti
 | `user_id` | string | Firebase uid. |
 | `session_id` | string | Browser-generated app session UUID. |
 | `week` | string | Active week, e.g. `week1`. |
-| `session` | string | Active study session label, e.g. `exploratory_1`. |
+| `session` | string | Active study session label, e.g. `week1_session2`. |
 | `tool` | string | `browser` or `ai_chat`. |
+| `source_type` | string | `web_page` or `chatbot_response`. |
 | `evaluation_event_type` | string | Specific evaluation trigger. |
-| `rating` | number/null | 1-5 rating for rating prompts. |
-| `reason` | string/null | Reason code for tool-switch prompts. |
+| `ratings` | map/null | Three 1-5 ratings: `newInformation`, `readability`, and `learning`. |
 | `evaluation_timestamp` | string | Client-side ISO timestamp when prompt was queued. |
 | `query_text` | string | Query context if available. |
 | `clicked_url` | string | Clicked browser result URL if available. |
+| `url` | string | Same as clicked URL for webpage evaluations. |
 | `clicked_rank` | number/null | Clicked browser result rank if available. |
 | `chat_question` | string | Chat question if rating a chatbot answer. |
 | `chat_answer` | string | Chatbot answer if rating a chatbot answer. |
-| `previous_tool` | string | Previous tool for switch reason evaluations. |
-| `next_tool` | string | Next tool for switch reason evaluations. |
+| `prompt` | string | Chat prompt or search query context. |
+| `response_id` | string | Frontend-generated chatbot response id. |
 | `returned_at` | string | Client-side return timestamp for browser-result-return evaluations. |
 | `time_away_ms` | number/null | Time away from app for browser-result-return evaluations. |
 | `result_count` | number/null | Search result count for browser-search-result evaluations. |
@@ -260,17 +292,5 @@ Current `evaluation_event_type` values:
 
 | Value | Meaning | Response field |
 | --- | --- | --- |
-| `browser_search_results_loaded` | User rated browser search result set. | `rating` |
-| `chatbot_answer_shown` | User rated AI chat answer. | `rating` |
-| `browser_result_returned` | User rated an external page after returning to the app. | `rating` |
-| `tool_switch_reason` | User selected why they switched tools. | `reason` |
-
-Current `tool_switch_reason` reason values:
-
-| Value | Label |
-| --- | --- |
-| `need_broader_sources` | Need broader sources |
-| `need_explanation` | Need an explanation |
-| `verify_or_compare` | Verify or compare |
-| `current_tool_not_enough` | Current tool was not enough |
-
+| `chatbot_answer_shown` | User rated an AI Chat response. | `ratings` |
+| `browser_result_returned` | User rated a Web Search page after closing/returning from it. | `ratings` |

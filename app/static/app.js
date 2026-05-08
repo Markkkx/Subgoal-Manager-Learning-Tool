@@ -11,10 +11,10 @@ import {
   getUserWeekProgress,
   saveUserOnboarding,
   saveUserStudyProfile,
-  saveWeek0Subgoals,
   saveUserWeek,
   getPostTestQuestions,
   savePostTest,
+  saveLearningOutcome,
   saveQuickEvaluation,
 } from "./firebase-firestore.js";
 import { baselineQuizQuestions } from "./onboarding-quiz.js";
@@ -38,7 +38,7 @@ const dashboardProgressCaption = document.getElementById("dashboard-progress-cap
 const dashboardProgressFill = document.getElementById("dashboard-progress-fill");
 const weekCardList = document.getElementById("week-card-list");
 const dashboardLogoutButton = document.getElementById("dashboard-logout-button");
-// Exploratory session shell (delayed test + subgoal planning)
+// Session 2 shell (learning goal statement + goal planning)
 const weekShell = document.getElementById("week-shell");
 const weekShellEyebrow = document.getElementById("week-shell-eyebrow");
 const weekShellTitle = document.getElementById("week-shell-title");
@@ -47,7 +47,7 @@ const weekShellContent = document.getElementById("week-shell-content");
 const weekShellValidation = document.getElementById("week-shell-validation");
 const weekShellBack = document.getElementById("week-shell-back");
 const weekShellNext = document.getElementById("week-shell-next");
-// Structured session shell (instructions + placeholder assessment)
+// Session 1 shell (required lecture recording)
 const structuredSessionShell = document.getElementById("structured-session-shell");
 const structuredSessionEyebrow = document.getElementById("structured-session-eyebrow");
 const structuredSessionTitle = document.getElementById("structured-session-title");
@@ -64,6 +64,14 @@ const postTestValidation = document.getElementById("post-test-validation");
 const postTestButton = document.getElementById("post-test-button");
 const postTestBack = document.getElementById("post-test-back");
 const postTestSubmit = document.getElementById("post-test-submit");
+const learningOutcomeShell = document.getElementById("learning-outcome-shell");
+const learningOutcomeEyebrow = document.getElementById("learning-outcome-eyebrow");
+const learningOutcomeTitle = document.getElementById("learning-outcome-title");
+const learningOutcomeSubtitle = document.getElementById("learning-outcome-subtitle");
+const learningOutcomeContent = document.getElementById("learning-outcome-content");
+const learningOutcomeValidation = document.getElementById("learning-outcome-validation");
+const learningOutcomeBack = document.getElementById("learning-outcome-back");
+const learningOutcomeNext = document.getElementById("learning-outcome-next");
 const authUserDisplay = document.getElementById("auth-user-display");
 const loginTab = document.getElementById("login-tab");
 const signupTab = document.getElementById("signup-tab");
@@ -97,6 +105,7 @@ const quickEvaluationPopup = document.getElementById("quick-evaluation-popup");
 const quickEvaluationQuestion = document.getElementById("quick-evaluation-question");
 const quickEvaluationOptions = document.getElementById("quick-evaluation-options");
 const quickEvaluationDismiss = document.getElementById("quick-evaluation-dismiss");
+const completeLearningButton = document.getElementById("complete-learning-button");
 
 // ── Global State ──────────────────────────────────────────────────────────────
 let currentUserId = "demo-user";
@@ -117,6 +126,52 @@ const SEARCH_PAGE_SIZE = 20;
 let searchNextStart = 0;
 let searchHasMore = false;
 let searchLoadingMore = false;
+let activeLearningSession = null;
+let learningTimerStartedAt = null;
+let learningOutcomeState = {
+  weekId: "",
+  sessionKey: "",
+  step: "summary",
+  summary: "",
+  wordCount: 0,
+  answers: {},
+};
+
+const LEARNING_MIN_SECONDS = 25 * 60;
+const DEBUG_LEARNING_ELAPSED_PARAM = "debugLearningElapsed";
+const PLACEHOLDER_LECTURE_VIDEO_URL = "";
+const FREQUENCY_OPTIONS = [
+  "More than 3 times a day",
+  "At least once a day",
+  "More than 3 times a week",
+  "Once a week",
+  "Less than once a week",
+];
+const EDUCATION_OPTIONS = [
+  "Less than high school",
+  "High school degree",
+  "Some years in college",
+  "College degree or equivalent",
+  "Advanced degree from graduate college",
+];
+const PLACEHOLDER_LEARNING_GOALS = {
+  week1: "Placeholder learning goal statement for Week 1. Adrian and Kylie will provide the final goal text.",
+  week2: "Placeholder learning goal statement for Week 2. Adrian and Kylie will provide the final goal text.",
+  week3: "Placeholder learning goal statement for Week 3. Adrian and Kylie will provide the final goal text.",
+  week4: "Placeholder learning goal statement for Week 4. Adrian and Kylie will provide the final goal text.",
+};
+const PLACEHOLDER_OUTCOME_QUESTIONS = [
+  {
+    id: "outcome_q1",
+    prompt: "[Placeholder] Which idea was most important in today's learning?",
+    options: ["Placeholder option A", "Placeholder option B", "Placeholder option C", "Placeholder option D"],
+  },
+  {
+    id: "outcome_q2",
+    prompt: "[Placeholder] Which statement best matches what you learned today?",
+    options: ["Placeholder option A", "Placeholder option B", "Placeholder option C", "Placeholder option D"],
+  },
+];
 
 const weekDefinitions = [
   { id: "week1", label: "Week 1" },
@@ -125,19 +180,20 @@ const weekDefinitions = [
   { id: "week4", label: "Week 4" },
 ];
 
-const onboardingSteps = ["welcome", "consent", "demographics", "quiz", "subgoals", "complete"];
+const onboardingSteps = ["welcome", "consent", "demographics", "quiz"];
 
 const onboardingState = {
   step: "welcome",
   completed: false,
   consentAgreed: false,
   demographics: {
-    ageRange: "",
-    primaryLanguage: "",
+    gender: "",
+    age: "",
     educationLevel: "",
-    searchEngineFamiliarity: "4",
-    conversationalAiFamiliarity: "4",
-    technologyUsageFrequency: "",
+    nativeLanguageEnglish: "",
+    englishLearningStartAge: "",
+    searchEngineUseFrequency: "",
+    conversationalAiUseFrequency: "",
   },
   quizAnswers: {},
   subgoals: createDefaultSubgoals(),
@@ -150,55 +206,22 @@ const dashboardState = {
   weeks: createDefaultWeeks(),
 };
 
-// State for the exploratory session pre-flow (delayed test + subgoal planning)
+// State for the Session 2 pre-flow (learning goal planning)
 const weekFlowState = {
   weekId: "",
-  step: "",           // "delayedTest" | "subgoals"
+  step: "",           // "goalPlanning"
   delayedTestAnswers: {},
   subgoals: createDefaultWeekSubgoals(),
   currentSessionIndex: 0,
   sessionTimeRemaining: 25 * 60,
 };
 
-// State for the structured session flow
+// State for the Session 1 video gate
 const structuredSessionState = {
   weekId: "",
-  step: "instructions", // "instructions" | "assessment"
-  materialsChecked: false,
-  assessmentAnswers: {},
+  step: "video", // "video"
+  videoCompleted: false,
 };
-
-// Placeholder structured assessment questions.
-// Replace prompts and options with real content when ready.
-const STRUCTURED_ASSESSMENT_QUESTIONS = [
-  {
-    id: "sa_q1",
-    type: "singleChoice",
-    prompt: "[Placeholder] Which of the following best describes the key concept from this week's materials?",
-    options: [
-      "Option A — Placeholder",
-      "Option B — Placeholder",
-      "Option C — Placeholder",
-      "Option D — Placeholder",
-    ],
-  },
-  {
-    id: "sa_q2",
-    type: "shortAnswer",
-    prompt: "[Placeholder] In 2–3 sentences, summarize the main idea from the materials you watched this week.",
-  },
-  {
-    id: "sa_q3",
-    type: "singleChoice",
-    prompt: "[Placeholder] Which approach is most aligned with the learning objectives for this week?",
-    options: [
-      "Approach A — Placeholder",
-      "Approach B — Placeholder",
-      "Approach C — Placeholder",
-      "Approach D — Placeholder",
-    ],
-  },
-];
 
 if (sessionIdDisplay) {
   sessionIdDisplay.textContent = sessionId;
@@ -300,13 +323,17 @@ chatForm.addEventListener("submit", async (event) => {
     enqueueQuickEvaluation({
       eventType: "chatbot_answer_shown",
       tool: "ai_chat",
-      question: "How useful was this answer?",
-      responseKey: "rating",
-      options: createRatingOptions(),
+      sourceType: "chatbot_response",
+      questions: [
+        { id: "newInformation", text: "How much new information did you find in this response?" },
+        { id: "readability", text: "How easy was it to read?" },
+        { id: "learning", text: "How much did you learn from this response?" },
+      ],
       metadata: {
         queryText: currentQuery,
         chatQuestion: message,
         chatAnswer: data.reply,
+        responseId: crypto.randomUUID(),
       },
     });
   } catch (error) {
@@ -379,6 +406,37 @@ authForm.addEventListener("submit", async (event) => {
 logoutButton.addEventListener("click", async () => { await logoutUser(); });
 dashboardLogoutButton.addEventListener("click", async () => { await logoutUser(); });
 
+if (completeLearningButton) {
+  completeLearningButton.addEventListener("click", async () => {
+    if (!activeLearningSession || completeLearningButton.disabled) return;
+    await completeLearningSession();
+  });
+}
+
+if (learningOutcomeBack) {
+  learningOutcomeBack.addEventListener("click", async () => {
+    await loadDashboardState();
+    showDashboardView();
+  });
+}
+
+if (learningOutcomeNext) {
+  learningOutcomeNext.addEventListener("click", async () => {
+    learningOutcomeValidation.textContent = "";
+    const error = await readAndPersistLearningOutcomeStep();
+    if (error) {
+      learningOutcomeValidation.textContent = error;
+      return;
+    }
+    if (learningOutcomeState.step === "summary") {
+      learningOutcomeState.step = "questions";
+      renderLearningOutcomeStep();
+      return;
+    }
+    await finalizeLearningOutcome();
+  });
+}
+
 // ── Onboarding Navigation ─────────────────────────────────────────────────────
 onboardingBack.addEventListener("click", async () => {
   const currentIndex = onboardingSteps.indexOf(onboardingState.step);
@@ -397,6 +455,14 @@ onboardingNext.addEventListener("click", async () => {
   }
 
   const currentIndex = onboardingSteps.indexOf(onboardingState.step);
+  if (onboardingState.step === "quiz") {
+    onboardingState.completed = true;
+    await persistOnboardingProgress();
+    await loadDashboardState();
+    showDashboardView();
+    return;
+  }
+
   const isLastStep = currentIndex === onboardingSteps.length - 1;
   if (isLastStep) {
     await loadDashboardState();
@@ -404,19 +470,11 @@ onboardingNext.addEventListener("click", async () => {
     return;
   }
 
-  if (onboardingState.step === "subgoals") {
-    onboardingState.completed = true;
-    onboardingState.step = "complete";
-    await persistOnboardingProgress();
-    renderOnboardingStep();
-    return;
-  }
-
   setOnboardingStep(onboardingSteps[currentIndex + 1]);
   await persistOnboardingProgress();
 });
 
-// ── Exploratory Session Shell Navigation ─────────────────────────────────────
+// ── Session 2 Shell Navigation ────────────────────────────────────────────────
 weekShellBack.addEventListener("click", async () => {
   await loadDashboardState();
   showDashboardView();
@@ -431,42 +489,10 @@ weekShellNext.addEventListener("click", async () => {
   }
 
   await persistWeekFlowState();
-
-  if (weekFlowState.step === "delayedTest") {
-    weekFlowState.step = "subgoals";
-    renderWeekFlowStep();
-    return;
-  }
-
-  // Subgoal step done — enter main research page
-  const currentWeek = dashboardState.weeks[weekFlowState.weekId];
-  currentWeek.subgoalsCompleted = true;
-  currentWeek.status = "in_progress";
-  currentWeek.exploratoryStatus = "in_progress";
-  currentWeek.subgoals = weekFlowState.subgoals;
-  currentWeek.exploratoryStartedAt = currentWeek.exploratoryStartedAt || new Date().toISOString();
-  dashboardState.currentWeek = weekFlowState.weekId;
-  dashboardState.currentSession = "exploratory";
-
-  await saveUserStudyProfile(currentUserId, {
-    currentWeek: dashboardState.currentWeek,
-    currentSession: dashboardState.currentSession,
-    assignedCondition: dashboardState.assignedCondition,
-    weekProgress: summarizeWeekProgress(),
-  });
-  await saveUserWeek(currentUserId, weekFlowState.weekId, currentWeek);
-
-  const savedSubgoals = weekFlowState.subgoals;
-  const savedWeekId = weekFlowState.weekId;
-  resetWeekFlowState();
-  weekFlowState.subgoals = savedSubgoals;
-  weekFlowState.weekId = savedWeekId;
-  weekFlowState.currentSessionIndex = 0;
-  weekFlowState.sessionTimeRemaining = 25 * 60;
-  showAppView();
+  await beginLearningSession(weekFlowState.weekId, "session2");
 });
 
-// ── Structured Session Shell Navigation ───────────────────────────────────────
+// ── Session 1 Shell Navigation ────────────────────────────────────────────────
 structuredSessionBack.addEventListener("click", async () => {
   // Save the current step so the user can resume if they come back
   if (structuredSessionState.weekId) {
@@ -487,40 +513,7 @@ structuredSessionNext.addEventListener("click", async () => {
     return;
   }
 
-  if (structuredSessionState.step === "instructions") {
-    // Advance to assessment and save progress for resume
-    structuredSessionState.step = "assessment";
-    dashboardState.weeks[structuredSessionState.weekId] = {
-      ...dashboardState.weeks[structuredSessionState.weekId],
-      structuredStatus: "in_progress",
-      structuredStep: "assessment",
-    };
-    await saveUserWeek(currentUserId, structuredSessionState.weekId, dashboardState.weeks[structuredSessionState.weekId]);
-    renderStructuredSessionStep();
-    return;
-  }
-
-  if (structuredSessionState.step === "assessment") {
-    // Save answers alongside the week doc (avoids sub-collection permission issues)
-    const weekId = structuredSessionState.weekId;
-    dashboardState.weeks[weekId] = {
-      ...dashboardState.weeks[weekId],
-      structuredStatus: "completed",
-      structuredStep: "completed",
-      structuredCompletedAt: new Date().toISOString(),
-      structuredAssessmentAnswers: structuredSessionState.assessmentAnswers,
-    };
-    await saveUserWeek(currentUserId, weekId, dashboardState.weeks[weekId]);
-
-    // Reset state and go back to dashboard
-    structuredSessionState.weekId = "";
-    structuredSessionState.step = "instructions";
-    structuredSessionState.materialsChecked = false;
-    structuredSessionState.assessmentAnswers = {};
-
-    await loadDashboardState();
-    showDashboardView();
-  }
+  await beginLearningSession(structuredSessionState.weekId, "session1");
 });
 
 // ── Auth State Listener ───────────────────────────────────────────────────────
@@ -571,6 +564,7 @@ function hideAllShells() {
   structuredSessionShell.classList.add("hidden");
   appShell.classList.add("hidden");
   postTestShell.classList.add("hidden");
+  learningOutcomeShell.classList.add("hidden");
 }
 
 function showAuthView() {
@@ -608,14 +602,24 @@ function showAppView() {
   hideAllShells();
   resetResearchToolState();
   appShell.classList.remove("hidden");
-  startCountdown(weekFlowState.sessionTimeRemaining);
+  const layoutGrid = document.getElementById("layout-grid");
+  const sidebar = document.getElementById("subgoal-sidebar");
+  const hideSidebar = activeLearningSession?.sessionType === "session1";
+  if (layoutGrid) layoutGrid.classList.toggle("no-sidebar", hideSidebar);
+  if (sidebar) sidebar.classList.toggle("hidden", hideSidebar);
+  startCountdown();
   renderSubgoalSidebar();
-  renderSessionIndicator();
 }
 
 function showPostTestView() {
   hideAllShells();
   postTestShell.classList.remove("hidden");
+}
+
+function showLearningOutcomeView() {
+  hideAllShells();
+  learningOutcomeShell.classList.remove("hidden");
+  renderLearningOutcomeStep();
 }
 
 // ── Auth Handler ──────────────────────────────────────────────────────────────
@@ -661,9 +665,16 @@ async function loadDashboardState() {
     dashboardState.weeks = createDefaultWeeks();
 
     weekDefinitions.forEach((week) => {
-      dashboardState.weeks[week.id] = {
+      const mergedWeek = {
         ...dashboardState.weeks[week.id],
         ...(weekData[week.id] || {}),
+      };
+      dashboardState.weeks[week.id] = {
+        ...mergedWeek,
+        legacySessions: Array.isArray(mergedWeek.sessions)
+          ? mergedWeek.sessions
+          : mergedWeek.legacySessions || null,
+        sessions: normalizeWeekSessions(mergedWeek, week.id),
       };
     });
   } catch (error) {
@@ -699,7 +710,7 @@ function renderDashboard() {
           <div class="session-card-row">
             <article class="session-entry-card">
               <span class="session-status-badge ${sAction.statusClass}">${escapeHtml(sAction.statusLabel)}</span>
-              <h4>Structured Session</h4>
+              <h4>${escapeHtml(formatSessionLabel(week.id, "session1"))}</h4>
               <p class="session-entry-meta">${escapeHtml(sAction.description)}</p>
               <button
                 class="session-entry-action ${sAction.completed ? "completed" : ""} ${sAction.locked ? "locked" : ""}"
@@ -711,7 +722,7 @@ function renderDashboard() {
 
             <article class="session-entry-card">
               <span class="session-status-badge ${eAction.statusClass}">${escapeHtml(eAction.statusLabel)}</span>
-              <h4>Exploratory Session</h4>
+              <h4>${escapeHtml(formatSessionLabel(week.id, "session2"))}</h4>
               <p class="session-entry-meta">${escapeHtml(eAction.description)}</p>
               <button
                 class="session-entry-action ${eAction.completed ? "completed" : ""} ${eAction.locked ? "locked" : ""}"
@@ -755,7 +766,13 @@ function renderDashboard() {
 
 function getStructuredSessionAction(weekId, weekState) {
   const weekUnlocked = isWeekUnlocked(weekId);
-  const structuredStatus = weekState.structuredStatus || "not_started";
+  const sessionState = getWeekSessionState(weekState, weekId, "session1");
+  const structuredStatus =
+    isSessionComplete(weekId, weekState, "session1")
+      ? "completed"
+      : sessionState.status !== "not_started"
+        ? sessionState.status
+        : weekState.structuredStatus || "not_started";
 
   if (!weekUnlocked) {
     const prevIdx = weekDefinitions.findIndex((w) => w.id === weekId) - 1;
@@ -775,7 +792,7 @@ function getStructuredSessionAction(weekId, weekState) {
       statusLabel: "Completed",
       statusClass: "status-completed",
       buttonLabel: "Completed",
-      description: "You have completed this week's structured session.",
+      description: "You have completed this session.",
       completed: true,
       locked: false,
     };
@@ -785,8 +802,8 @@ function getStructuredSessionAction(weekId, weekState) {
     return {
       statusLabel: "In Progress",
       statusClass: "status-in-progress",
-      buttonLabel: "Resume Structured Session",
-      description: "Continue where you left off in the structured session.",
+      buttonLabel: "Resume Session 1",
+      description: "Continue where you left off in Session 1.",
       completed: false,
       locked: false,
     };
@@ -795,8 +812,8 @@ function getStructuredSessionAction(weekId, weekState) {
   return {
     statusLabel: "Not Started",
     statusClass: "status-not-started",
-    buttonLabel: "Start Structured Session",
-    description: "Watch the assigned lecture materials, then complete the assessment.",
+    buttonLabel: "Start Session 1",
+    description: "Watch the lecture recording, then complete at least 25 minutes of learning.",
     completed: false,
     locked: false,
   };
@@ -804,8 +821,14 @@ function getStructuredSessionAction(weekId, weekState) {
 
 function getExploratorySessionAction(weekId, weekState) {
   const weekUnlocked = isWeekUnlocked(weekId);
-  const structuredDone = weekState.structuredStatus === "completed";
-  const exploratoryStatus = weekState.exploratoryStatus || "not_started";
+  const structuredDone = isSessionComplete(weekId, weekState, "session1");
+  const sessionState = getWeekSessionState(weekState, weekId, "session2");
+  const exploratoryStatus =
+    isSessionComplete(weekId, weekState, "session2")
+      ? "completed"
+      : sessionState.status !== "not_started"
+        ? sessionState.status
+        : weekState.exploratoryStatus || "not_started";
 
   // Locked if the week itself is locked or structured session not yet done
   if (!weekUnlocked || !structuredDone) {
@@ -815,7 +838,7 @@ function getExploratorySessionAction(weekId, weekState) {
       buttonLabel: "Locked",
       description: structuredDone
         ? `Complete ${formatWeekLabel(weekDefinitions[weekDefinitions.findIndex((w) => w.id === weekId) - 1]?.id)} first.`
-        : "Complete the Structured Session for this week first.",
+        : "Complete Session 1 for this week first.",
       completed: false,
       locked: true,
     };
@@ -826,7 +849,7 @@ function getExploratorySessionAction(weekId, weekState) {
       statusLabel: "Completed",
       statusClass: "status-completed",
       buttonLabel: "Completed",
-      description: "You have completed this week's exploratory session.",
+      description: "You have completed this session.",
       completed: true,
       locked: false,
     };
@@ -836,8 +859,8 @@ function getExploratorySessionAction(weekId, weekState) {
     return {
       statusLabel: "In Progress",
       statusClass: "status-in-progress",
-      buttonLabel: "Resume Exploratory Session",
-      description: "Continue where you left off in the research page.",
+      buttonLabel: "Resume Session 2",
+      description: "Continue where you left off in Session 2.",
       completed: false,
       locked: false,
     };
@@ -846,11 +869,8 @@ function getExploratorySessionAction(weekId, weekState) {
   return {
     statusLabel: "Not Started",
     statusClass: "status-not-started",
-    buttonLabel: "Start Exploratory Session",
-    description:
-      weekId === "week1"
-        ? "Set your sub-goals, then begin the research session."
-        : "Start with a short delayed test, then set sub-goals and begin research.",
+    buttonLabel: "Start Session 2",
+    description: "Review the learning goal statement, plan your goals, then learn for at least 25 minutes.",
     completed: false,
     locked: false,
   };
@@ -950,31 +970,49 @@ function renderPostTestForm(questions) {
     .join("");
 }
 
-// ── Structured Session ────────────────────────────────────────────────────────
+// ── Session 1 ─────────────────────────────────────────────────────────────────
 
-// Entry point: open (or resume) the structured session for a given week.
+// Entry point: open or resume Session 1 for a given week.
 async function openStructuredSession(weekId) {
   const weekState = dashboardState.weeks[weekId];
+  const sessionState = getWeekSessionState(weekState, weekId, "session1");
 
   if (!isWeekUnlocked(weekId)) return;
-  if (weekState.structuredStatus === "completed") return;
+  if (sessionState.learningOutcomeCompleted) return;
+  if (sessionState.learningCompletedAt && !sessionState.learningOutcomeCompleted) {
+    learningOutcomeState = {
+      weekId,
+      sessionKey: getSessionKey(weekId, "session1"),
+      step: "summary",
+      summary: "",
+      wordCount: 0,
+      answers: {},
+    };
+    showLearningOutcomeView();
+    return;
+  }
+  if (sessionState.videoCompleted && sessionState.learningStartedAt && !sessionState.learningCompletedAt) {
+    activeLearningSession = { weekId, sessionType: "session1", sessionKey: getSessionKey(weekId, "session1") };
+    dashboardState.currentWeek = weekId;
+    dashboardState.currentSession = "session1";
+    showAppView();
+    return;
+  }
+  if (sessionState.status === "completed" || weekState.structuredStatus === "completed") return;
 
   structuredSessionState.weekId = weekId;
-  structuredSessionState.materialsChecked = false;
-  structuredSessionState.assessmentAnswers = {};
+  structuredSessionState.step = "video";
+  structuredSessionState.videoCompleted = Boolean(sessionState.videoCompleted);
 
-  // Resume at the correct step if the user left mid-way
-  if (weekState.structuredStatus === "in_progress" && weekState.structuredStep === "assessment") {
-    structuredSessionState.step = "assessment";
-  } else {
-    structuredSessionState.step = "instructions";
-  }
-
-  // Persist in_progress status immediately
+  // New Session 1 starts with a required lecture recording. Keep legacy fields for older dashboards.
   dashboardState.weeks[weekId] = {
     ...weekState,
     structuredStatus: "in_progress",
-    structuredStep: structuredSessionState.step,
+    structuredStep: "video",
+    sessions: upsertWeekSession(weekState, weekId, "session1", {
+      status: "in_progress",
+      videoCompleted: structuredSessionState.videoCompleted,
+    }),
   };
   await saveUserWeek(currentUserId, weekId, dashboardState.weeks[weekId]);
 
@@ -985,148 +1023,124 @@ async function openStructuredSession(weekId) {
 // Render the current step of the structured session.
 function renderStructuredSessionStep() {
   const weekLabel = formatWeekLabel(structuredSessionState.weekId);
-  structuredSessionEyebrow.textContent = `${weekLabel} · Structured Session`;
+  structuredSessionEyebrow.textContent = `${weekLabel} · Session 1`;
   structuredSessionValidation.textContent = "";
 
-  if (structuredSessionState.step === "instructions") {
-    structuredSessionTitle.textContent = "Watch the Learning Materials";
+  if (structuredSessionState.step === "video") {
+    structuredSessionTitle.textContent = "Watch the Lecture Recording";
     structuredSessionSubtitle.textContent =
-      "Complete the assigned materials before taking the assessment.";
-    structuredSessionNext.textContent = "Continue to Assessment";
+      "The learning activity unlocks after the video reaches the end.";
+    structuredSessionNext.textContent = "Start Learning";
+    structuredSessionNext.disabled = !structuredSessionState.videoCompleted;
 
     structuredSessionContent.innerHTML = `
       <section class="onboarding-section">
         <div class="onboarding-panel">
           <p class="onboarding-copy">
-            Please watch the assigned lecture and tutorial materials for
-            <strong>${escapeHtml(weekLabel)}</strong> before continuing.
-            These materials have been prepared for you and are available outside this website.
+            Please watch the lecture recording before starting learning.
           </p>
           <p class="onboarding-copy">
-            After you finish watching, check the box below and click
-            <strong>Continue to Assessment</strong>.
+            [Placeholder] Add the real video URL to <code>PLACEHOLDER_LECTURE_VIDEO_URL</code>
+            in <code>app/static/app.js</code> when it is ready.
           </p>
         </div>
-        <label class="consent-check">
-          <input id="materials-completed-check" type="checkbox"
-            ${structuredSessionState.materialsChecked ? "checked" : ""} />
-          <span>I have completed the assigned learning materials for this week.</span>
-        </label>
+        ${renderLectureVideoPlaceholder()}
       </section>
     `;
+    attachLectureVideoTracking();
     return;
-  }
-
-  if (structuredSessionState.step === "assessment") {
-    structuredSessionTitle.textContent = "Structured Session Assessment";
-    structuredSessionSubtitle.textContent =
-      "Answer all questions based on the materials you watched.";
-    structuredSessionNext.textContent = "Submit Assessment";
-
-    structuredSessionContent.innerHTML = `
-      <section class="onboarding-section">
-        <p class="inline-note">
-          [Placeholder] Real assessment questions for ${escapeHtml(weekLabel)} will be added here before the study begins.
-        </p>
-        <div class="quiz-list">
-          ${STRUCTURED_ASSESSMENT_QUESTIONS.map((q, i) =>
-            renderStructuredQuestionCard(q, i)
-          ).join("")}
-        </div>
-      </section>
-    `;
   }
 }
 
-// Render one question card for the structured assessment (supports singleChoice + shortAnswer).
-function renderStructuredQuestionCard(question, index) {
-  if (question.type === "shortAnswer") {
+function renderLectureVideoPlaceholder() {
+  if (PLACEHOLDER_LECTURE_VIDEO_URL) {
     return `
-      <article class="question-card">
-        <h3>Question ${index + 1}</h3>
-        <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
-        <div class="field-group full-width">
-          <label for="${question.id}">Short answer</label>
-          <textarea id="${question.id}" placeholder="Type your response here…">${escapeHtml(
-            structuredSessionState.assessmentAnswers[question.id] || ""
-          )}</textarea>
-        </div>
-      </article>
+      <video id="lecture-video" class="lecture-video" controls controlsList="nodownload noplaybackrate" disablepictureinpicture>
+        <source src="${escapeHtml(PLACEHOLDER_LECTURE_VIDEO_URL)}" />
+      </video>
     `;
   }
-
   return `
-    <article class="question-card">
-      <h3>Question ${index + 1}</h3>
-      <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
-      <div class="option-list">
-        ${question.options
-          .map(
-            (opt) => `
-          <label>
-            <input
-              type="radio"
-              name="${question.id}"
-              value="${escapeHtml(opt)}"
-              ${structuredSessionState.assessmentAnswers[question.id] === opt ? "checked" : ""}
-            />
-            ${escapeHtml(opt)}
-          </label>
-        `
-          )
-          .join("")}
+    <div class="lecture-video placeholder" id="lecture-video-placeholder" role="group" aria-label="Placeholder lecture video">
+      <div>
+        <p class="lecture-video-title">Lecture video placeholder</p>
+        <p class="lecture-video-copy">Use this placeholder until the real video file is connected.</p>
       </div>
-    </article>
+      <button id="placeholder-video-complete" class="primary-action" type="button">Mark Placeholder Video Complete</button>
+    </div>
   `;
 }
 
-// Validate the current structured session step and collect answers into state.
-function readAndValidateStructuredStep() {
-  if (structuredSessionState.step === "instructions") {
-    const checkbox = document.getElementById("materials-completed-check");
-    if (!checkbox || !checkbox.checked) {
-      return "Please confirm you have completed the assigned learning materials before continuing.";
-    }
-    structuredSessionState.materialsChecked = true;
-    return "";
+function attachLectureVideoTracking() {
+  const video = document.getElementById("lecture-video");
+  const placeholderButton = document.getElementById("placeholder-video-complete");
+  const markComplete = async () => {
+    structuredSessionState.videoCompleted = true;
+    structuredSessionNext.disabled = false;
+    const weekId = structuredSessionState.weekId;
+    const weekState = dashboardState.weeks[weekId] || {};
+    dashboardState.weeks[weekId] = {
+      ...weekState,
+      sessions: upsertWeekSession(weekState, weekId, "session1", {
+        status: "in_progress",
+        videoCompleted: true,
+      }),
+    };
+    await saveUserWeek(currentUserId, weekId, dashboardState.weeks[weekId]);
+  };
+
+  if (placeholderButton) {
+    placeholderButton.addEventListener("click", markComplete);
   }
 
-  if (structuredSessionState.step === "assessment") {
-    const answers = {};
-    for (const q of STRUCTURED_ASSESSMENT_QUESTIONS) {
-      if (q.type === "shortAnswer") {
-        const el = document.getElementById(q.id);
-        const val = el ? el.value.trim() : "";
-        if (!val) return "Please answer all assessment questions before submitting.";
-        answers[q.id] = val;
-      } else {
-        const selected = document.querySelector(`input[name="${q.id}"]:checked`);
-        if (!selected) return "Please answer all assessment questions before submitting.";
-        answers[q.id] = selected.value;
+  if (video) {
+    let furthestTime = 0;
+    video.addEventListener("timeupdate", () => {
+      if (video.currentTime > furthestTime + 0.75) {
+        video.currentTime = furthestTime;
+        return;
       }
-    }
-    structuredSessionState.assessmentAnswers = answers;
-    return "";
+      furthestTime = Math.max(furthestTime, video.currentTime);
+    });
+    video.addEventListener("seeking", () => {
+      if (video.currentTime > furthestTime + 1) video.currentTime = furthestTime;
+    });
+    video.addEventListener("ended", markComplete);
   }
+}
 
+function readAndValidateStructuredStep() {
+  if (!structuredSessionState.videoCompleted) {
+    return "Please watch the lecture recording to the end before starting learning.";
+  }
   return "";
 }
 
-// ── Exploratory Session ───────────────────────────────────────────────────────
+// ── Session 2 ─────────────────────────────────────────────────────────────────
 
-// Entry point: open (or resume) the exploratory session for a given week.
-// For weeks 2-4 this shows the delayed test first, then subgoal planning.
-// For week 1 it goes straight to subgoal planning.
+// Entry point: open or resume Session 2 for a given week.
 async function openExploratorySession(weekId) {
   const weekState = dashboardState.weeks[weekId];
+  const sessionState = getWeekSessionState(weekState, weekId, "session2");
 
-  // Guard: require week unlocked and structured session completed first
   if (!isWeekUnlocked(weekId)) return;
-  if (weekState.structuredStatus !== "completed") return;
-  if (weekState.exploratoryStatus === "completed") return;
+  if (!isSessionComplete(weekId, weekState, "session1")) return;
+  if (sessionState.learningOutcomeCompleted) return;
+  if (sessionState.learningCompletedAt && !sessionState.learningOutcomeCompleted) {
+    learningOutcomeState = {
+      weekId,
+      sessionKey: getSessionKey(weekId, "session2"),
+      step: "summary",
+      summary: "",
+      wordCount: 0,
+      answers: {},
+    };
+    showLearningOutcomeView();
+    return;
+  }
+  if (sessionState.status === "completed" || weekState.exploratoryStatus === "completed") return;
 
-  // Resume: if subgoals already completed and exploratory is in_progress → skip to app-shell
-  if (weekState.subgoalsCompleted && weekState.exploratoryStatus === "in_progress") {
+  if (sessionState.goalPlanningCompleted && sessionState.learningStartedAt && !sessionState.learningCompletedAt) {
     weekFlowState.weekId = weekId;
     weekFlowState.subgoals =
       weekState.subgoals && weekState.subgoals.length === 3
@@ -1135,7 +1149,8 @@ async function openExploratorySession(weekId) {
     weekFlowState.currentSessionIndex = weekState.currentSessionIndex ?? 0;
     weekFlowState.sessionTimeRemaining = weekState.sessionTimeRemaining ?? 25 * 60;
     dashboardState.currentWeek = weekId;
-    dashboardState.currentSession = "exploratory";
+    dashboardState.currentSession = "session2";
+    activeLearningSession = { weekId, sessionType: "session2", sessionKey: getSessionKey(weekId, "session2") };
 
     await saveUserStudyProfile(currentUserId, {
       currentWeek: dashboardState.currentWeek,
@@ -1148,23 +1163,23 @@ async function openExploratorySession(weekId) {
   }
 
   weekFlowState.weekId = weekId;
-  weekFlowState.delayedTestAnswers = weekState.delayedTestAnswers || {};
+  weekFlowState.step = "goalPlanning";
   weekFlowState.subgoals =
     weekState.subgoals && weekState.subgoals.length === 3
       ? weekState.subgoals
       : createDefaultWeekSubgoals();
 
-  // Week 1 skips the delayed test; later weeks skip it only if already completed
-  weekFlowState.step =
-    weekId === "week1" || weekState.delayedTestCompleted ? "subgoals" : "delayedTest";
-
   dashboardState.weeks[weekId] = {
     ...weekState,
     exploratoryStatus: "in_progress",
     exploratoryStartedAt: weekState.exploratoryStartedAt || new Date().toISOString(),
+    sessions: upsertWeekSession(weekState, weekId, "session2", {
+      status: "in_progress",
+      goalPlanningCompleted: Boolean(sessionState.goalPlanningCompleted),
+    }),
   };
   dashboardState.currentWeek = weekId;
-  dashboardState.currentSession = "exploratory";
+  dashboardState.currentSession = "session2";
 
   await saveUserWeek(currentUserId, weekId, dashboardState.weeks[weekId]);
   await saveUserStudyProfile(currentUserId, {
@@ -1181,34 +1196,16 @@ async function openExploratorySession(weekId) {
 // Render the delayed test or subgoal planning step.
 function renderWeekFlowStep() {
   const weekLabel = formatWeekLabel(weekFlowState.weekId);
-  weekShellEyebrow.textContent = `${weekLabel} · Exploratory Session`;
+  weekShellEyebrow.textContent = `${weekLabel} · Session 2`;
   weekShellValidation.textContent = "";
-
-  if (weekFlowState.step === "delayedTest") {
-    weekShellTitle.textContent = "Short Delayed Test";
-    weekShellSubtitle.textContent = " ";
-    weekShellNext.textContent = "Submit Delayed Test";
-    weekShellContent.innerHTML = `
-      <section class="onboarding-section">
-        <p class="inline-note">
-          ${escapeHtml(weekLabel)} begins with a short delayed test before sub-goal planning.
-        </p>
-        <div class="quiz-list">
-          ${getDelayedTestQuestions(weekFlowState.weekId)
-            .map((question, index) => renderDelayedQuestionCard(question, index))
-            .join("")}
-        </div>
-      </section>
-    `;
-    return;
-  }
-
-  // Subgoal planning step
-  weekShellTitle.textContent = "Sub-goal Planning";
-  weekShellSubtitle.textContent = "";
-  weekShellNext.textContent = "Save Sub-goals and Continue";
+  weekShellTitle.textContent = "Learning Goal Planning";
+  weekShellSubtitle.textContent = "Review the learning goal statement and write your goals for this session.";
+  weekShellNext.textContent = "Start Learning";
   weekShellContent.innerHTML = `
     <section class="onboarding-section">
+      <div class="onboarding-panel">
+        <p class="onboarding-copy">${escapeHtml(getLearningGoalStatement(weekFlowState.weekId))}</p>
+      </div>
       <div class="subgoal-list">
         ${weekFlowState.subgoals
           .map(
@@ -1216,44 +1213,13 @@ function renderWeekFlowStep() {
               <article class="subgoal-card">
                 <div class="form-grid">
                   <div class="field-group full-width">
-                    <label for="weekly-goal-question-${index}">Sub-goal question</label>
+                    <label for="weekly-goal-question-${index}">Goal ${index + 1}${index === 0 ? " (required)" : " (optional)"}</label>
                     <input
                       id="weekly-goal-question-${index}"
                       type="text"
                       value="${escapeHtml(goal.question)}"
-                      placeholder="What do you want to focus on this week?"
+                      placeholder="Write a learning goal for this session"
                     />
-                  </div>
-                  <div class="field-group">
-                    <label for="weekly-goal-type-${index}">Goal type</label>
-                    <select id="weekly-goal-type-${index}">
-                      ${renderSelectOptions(
-                        ["Concept", "Evidence", "Comparison", "Application"],
-                        goal.type
-                      )}
-                    </select>
-                  </div>
-                  <div class="field-group">
-                    <label for="weekly-goal-importance-${index}">Importance</label>
-                    <input
-                      id="weekly-goal-importance-${index}"
-                      type="range"
-                      min="1"
-                      max="7"
-                      value="${escapeHtml(goal.importance)}"
-                    />
-                    <span class="scale-value">Current value: <strong id="weekly-goal-importance-value-${index}">${escapeHtml(goal.importance)}</strong> / 7</span>
-                  </div>
-                  <div class="field-group full-width">
-                    <label for="weekly-goal-confidence-${index}">Confidence</label>
-                    <input
-                      id="weekly-goal-confidence-${index}"
-                      type="range"
-                      min="1"
-                      max="7"
-                      value="${escapeHtml(goal.confidence)}"
-                    />
-                    <span class="scale-value">Current value: <strong id="weekly-goal-confidence-value-${index}">${escapeHtml(goal.confidence)}</strong> / 7</span>
                   </div>
                 </div>
               </article>
@@ -1263,11 +1229,6 @@ function renderWeekFlowStep() {
       </div>
     </section>
   `;
-
-  weekFlowState.subgoals.forEach((_, index) => {
-    attachScaleMirror(`weekly-goal-importance-${index}`, `weekly-goal-importance-value-${index}`);
-    attachScaleMirror(`weekly-goal-confidence-${index}`, `weekly-goal-confidence-value-${index}`);
-  });
 }
 
 function renderDelayedQuestionCard(question, index) {
@@ -1411,7 +1372,7 @@ document.getElementById("back-to-dashboard-button").addEventListener("click", as
       subgoals: weekFlowState.subgoals,
       currentSessionIndex: weekFlowState.currentSessionIndex,
       sessionTimeRemaining: weekFlowState.sessionTimeRemaining,
-      sessions: weekState.sessions || [null, null, null],
+      sessions: normalizeWeekSessions(weekState, weekFlowState.weekId),
     });
   }
   await loadDashboardState();
@@ -1420,6 +1381,8 @@ document.getElementById("back-to-dashboard-button").addEventListener("click", as
 
 // ── Micro-Check Overlay ───────────────────────────────────────────────────────
 function showMicroCheck(sessionIndex) {
+  // TODO: Session check-in questions need to be redesigned based on professor feedback.
+  return;
   const overlay = document.getElementById("micro-check-overlay");
   const submit = document.getElementById("mc-submit");
   const error = document.getElementById("mc-error");
@@ -1506,16 +1469,36 @@ document.getElementById("micro-check-form").addEventListener("submit", async (e)
 // Counts up from 00:00. Label turns red after 25 minutes to remind the user,
 // but there is no hard time limit — the session continues indefinitely.
 let countdownInterval = null;
-const TIMER_WARN_SECONDS = 25 * 60;
+const TIMER_WARN_SECONDS = LEARNING_MIN_SECONDS;
 
-function startCountdown(_ignoredInitial) {
+function getDebugLearningElapsedSeconds() {
+  const params = new URLSearchParams(window.location.search);
+  const rawValue = params.get(DEBUG_LEARNING_ELAPSED_PARAM);
+  if (!rawValue) return 0;
+  const parsedValue = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 0;
+}
+
+function startCountdown() {
   if (countdownInterval) clearInterval(countdownInterval);
-  let elapsed = 0;
-  weekFlowState.sessionTimeRemaining = 0;
   const bar = document.getElementById("countdown-bar");
   const label = document.getElementById("countdown-label");
+  // Local testing helper: append ?debugLearningElapsed=1501 to the URL to
+  // simulate passing the 25-minute learning requirement without altering data.
+  const debugElapsedOffset = getDebugLearningElapsedSeconds();
+  const activeWeek = activeLearningSession ? dashboardState.weeks[activeLearningSession.weekId] : null;
+  const savedSession = activeLearningSession
+    ? getWeekSessionState(activeWeek || {}, activeLearningSession.weekId, activeLearningSession.sessionType)
+    : null;
+  learningTimerStartedAt = savedSession?.learningStartedAt
+    ? new Date(savedSession.learningStartedAt)
+    : new Date();
 
   function tick() {
+    const elapsed = Math.max(
+      0,
+      Math.floor((Date.now() - learningTimerStartedAt.getTime()) / 1000) + debugElapsedOffset
+    );
     const m = String(Math.floor(elapsed / 60)).padStart(2, "0");
     const s = String(elapsed % 60).padStart(2, "0");
     if (label) {
@@ -1530,7 +1513,11 @@ function startCountdown(_ignoredInitial) {
       bar.classList.toggle("timer-over", elapsed >= TIMER_WARN_SECONDS);
     }
     weekFlowState.sessionTimeRemaining = elapsed;
-    elapsed++;
+    if (completeLearningButton) {
+      completeLearningButton.disabled = elapsed < LEARNING_MIN_SECONDS;
+      completeLearningButton.textContent =
+        elapsed < LEARNING_MIN_SECONDS ? "Complete Learning" : "Complete Learning";
+    }
   }
   tick();
   countdownInterval = setInterval(tick, 1000);
@@ -1763,7 +1750,7 @@ async function logClickEvent(payload) {
 function setActiveTool(nextTool, options = {}) {
   if (!nextTool || nextTool === activeTool) return;
 
-  const { logSwitch = true, promptReason = true } = options;
+  const { logSwitch = true } = options;
   const previousTool = activeTool;
   activeTool = nextTool;
 
@@ -1783,24 +1770,6 @@ function setActiveTool(nextTool, options = {}) {
     });
   }
 
-  if (promptReason) {
-    enqueueQuickEvaluation({
-      eventType: "tool_switch_reason",
-      tool: nextTool,
-      question: "Why did you switch tools?",
-      responseKey: "reason",
-      options: [
-        { label: "Need broader sources", value: "need_broader_sources" },
-        { label: "Need an explanation", value: "need_explanation" },
-        { label: "Verify or compare", value: "verify_or_compare" },
-        { label: "Current tool was not enough", value: "current_tool_not_enough" },
-      ],
-      metadata: {
-        previousTool,
-        nextTool,
-      },
-    });
-  }
 }
 
 async function logToolSwitch(previousTool, nextTool) {
@@ -1840,16 +1809,55 @@ function showNextQuickEvaluation() {
     return;
   }
 
-  quickEvaluationQuestion.textContent = activeEvaluation.question;
+  quickEvaluationQuestion.textContent = activeEvaluation.question || "Quick evaluation";
   quickEvaluationOptions.innerHTML = "";
-  activeEvaluation.options.forEach((option) => {
-    const button = document.createElement("button");
-    button.className = "quick-evaluation-option";
-    button.type = "button";
-    button.textContent = option.label;
-    button.addEventListener("click", () => submitQuickEvaluation(option.value));
-    quickEvaluationOptions.appendChild(button);
-  });
+  if (Array.isArray(activeEvaluation.questions)) {
+    quickEvaluationOptions.innerHTML = `
+      <form id="quick-evaluation-form" class="quick-evaluation-form">
+        ${activeEvaluation.questions
+          .map(
+            (question) => `
+              <fieldset class="quick-evaluation-fieldset">
+                <legend>${escapeHtml(question.text)}</legend>
+                <div class="quick-evaluation-rating-row">
+                  ${createRatingOptions()
+                    .map(
+                      (option) => `
+                        <label>
+                          <input type="radio" name="${escapeHtml(question.id)}" value="${option.value}" required />
+                          <span>${option.label}</span>
+                        </label>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </fieldset>
+            `
+          )
+          .join("")}
+        <button class="quick-evaluation-submit" type="submit">Submit</button>
+      </form>
+    `;
+    document.getElementById("quick-evaluation-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const ratings = {};
+      activeEvaluation.questions.forEach((question) => {
+        const selected = event.target.querySelector(`input[name="${question.id}"]:checked`);
+        if (selected) ratings[question.id] = Number(selected.value);
+      });
+      if (Object.keys(ratings).length !== activeEvaluation.questions.length) return;
+      submitQuickEvaluation(ratings);
+    });
+  } else {
+    activeEvaluation.options.forEach((option) => {
+      const button = document.createElement("button");
+      button.className = "quick-evaluation-option";
+      button.type = "button";
+      button.textContent = option.label;
+      button.addEventListener("click", () => submitQuickEvaluation(option.value));
+      quickEvaluationOptions.appendChild(button);
+    });
+  }
 
   quickEvaluationPopup.classList.remove("hidden");
 }
@@ -1864,14 +1872,21 @@ async function submitQuickEvaluation(value) {
   const responsePayload = {
     userId: currentUserId,
     week: getActiveEvaluationWeek(),
+    weekId: getActiveEvaluationWeek(),
     session: getActiveEvaluationSession(),
     sessionId,
     tool: evaluation.tool,
+    toolType: evaluation.tool,
     eventType: evaluation.eventType,
     timestamp: evaluation.timestamp,
     ...(evaluation.metadata || {}),
   };
-  responsePayload[evaluation.responseKey] = value;
+  if (Array.isArray(evaluation.questions)) {
+    responsePayload.ratings = value;
+    responsePayload.sourceType = evaluation.sourceType;
+  } else {
+    responsePayload[evaluation.responseKey] = value;
+  }
 
   try {
     await logQuickEvaluationToElasticsearch(responsePayload);
@@ -1891,17 +1906,24 @@ async function logQuickEvaluationToElasticsearch(payload) {
       user_id: payload.userId,
       session_id: payload.sessionId,
       week: payload.week,
+      week_id: payload.weekId || payload.week,
       session: payload.session,
       tool: payload.tool,
+      tool_type: payload.toolType || payload.tool,
+      source_type: payload.sourceType || "",
       evaluation_event_type: payload.eventType,
       rating: payload.rating,
+      ratings: payload.ratings || null,
       reason: payload.reason,
       evaluation_timestamp: payload.timestamp,
       query_text: payload.queryText || "",
       clicked_url: payload.clickedUrl || "",
+      url: payload.clickedUrl || "",
       clicked_rank: payload.clickedRank ?? null,
       chat_question: payload.chatQuestion || "",
       chat_answer: payload.chatAnswer || "",
+      prompt: payload.chatQuestion || payload.queryText || "",
+      response_id: payload.responseId || "",
       previous_tool: payload.previousTool || "",
       next_tool: payload.nextTool || "",
       returned_at: payload.returnedAt || "",
@@ -1934,7 +1956,9 @@ function getActiveEvaluationWeek() {
 }
 
 function getActiveEvaluationSession() {
-  return `exploratory_${weekFlowState.currentSessionIndex + 1}`;
+  if (activeLearningSession) return activeLearningSession.sessionKey;
+  const currentSession = dashboardState.currentSession === "session1" ? "session1" : "session2";
+  return getSessionKey(getActiveEvaluationWeek(), currentSession);
 }
 
 async function tryLogReturnEvent() {
@@ -1971,9 +1995,12 @@ async function tryLogReturnEvent() {
     enqueueQuickEvaluation({
       eventType: "browser_result_returned",
       tool: "browser",
-      question: "How helpful was the page you visited?",
-      responseKey: "rating",
-      options: createRatingOptions(),
+      sourceType: "web_page",
+      questions: [
+        { id: "newInformation", text: "How much new information did you find on this page?" },
+        { id: "readability", text: "How easy was it to read?" },
+        { id: "learning", text: "How much did you learn from this page?" },
+      ],
       metadata: {
         queryText: returnContext.query_text,
         clickedUrl: returnContext.clicked_url,
@@ -2053,7 +2080,7 @@ function renderOnboardingStep() {
   if (step === "welcome") {
     onboardingTitle.textContent = "Welcome to Week 0";
     onboardingSubtitle.textContent =
-      "This onboarding module introduces the study, collects setup information, and prepares your first learning plan.";
+      "This onboarding module introduces the study and collects setup information.";
     onboardingNext.textContent = "Start Onboarding";
     onboardingContent.innerHTML = `
       <section class="onboarding-section">
@@ -2061,7 +2088,7 @@ function renderOnboardingStep() {
           <p class="onboarding-copy">
             Week 0 is the setup and preparation phase for this longitudinal learning study.
             You will review a consent placeholder, complete a short background form, preview the
-            baseline quiz framework, and define three initial sub-goals for the next phase.
+            baseline quiz framework.
           </p>
         </div>
       </section>
@@ -2098,46 +2125,64 @@ function renderOnboardingStep() {
       <section class="onboarding-section">
         <div class="form-grid">
           <div class="field-group">
-            <label for="age-range">Age range</label>
-            <select id="age-range">
+            <label for="gender">Gender</label>
+            <select id="gender">
               ${renderSelectOptions(
-                ["", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"],
-                onboardingState.demographics.ageRange,
-                "Select age range"
+                ["", "Female", "Male", "Non-binary", "Prefer not to share"],
+                onboardingState.demographics.gender,
+                "Select gender"
               )}
             </select>
           </div>
           <div class="field-group">
-            <label for="education-level">Education level</label>
+            <label for="age">Age</label>
+            <select id="age">
+              ${renderAgeOptions(onboardingState.demographics.age)}
+            </select>
+          </div>
+          <div class="field-group full-width">
+            <label for="education-level">Education</label>
             <select id="education-level">
               ${renderSelectOptions(
-                ["", "High school", "Some college", "Bachelor's degree", "Master's degree", "Doctoral degree", "Other"],
+                ["", ...EDUCATION_OPTIONS],
                 onboardingState.demographics.educationLevel,
-                "Select education level"
+                "Select education"
+              )}
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="native-language-english">Is your native language English?</label>
+            <select id="native-language-english">
+              ${renderSelectOptions(
+                ["", "Yes", "No"],
+                onboardingState.demographics.nativeLanguageEnglish,
+                "Select one"
+              )}
+            </select>
+          </div>
+          <div class="field-group" id="english-learning-age-group">
+            <label for="english-learning-start-age">At what age did you start learning English?</label>
+            <select id="english-learning-start-age">
+              ${renderAgeOptions(onboardingState.demographics.englishLearningStartAge)}
+            </select>
+          </div>
+          <div class="field-group full-width">
+            <label for="search-engine-use-frequency">Search engine use frequency</label>
+            <select id="search-engine-use-frequency">
+              ${renderSelectOptions(
+                ["", ...FREQUENCY_OPTIONS],
+                onboardingState.demographics.searchEngineUseFrequency,
+                "Select frequency"
               )}
             </select>
           </div>
           <div class="field-group full-width">
-            <label for="primary-language">Primary language</label>
-            <input id="primary-language" type="text" value="${escapeHtml(onboardingState.demographics.primaryLanguage)}" placeholder="e.g. English" />
-          </div>
-          <div class="field-group full-width">
-            <label for="search-engine-familiarity">Familiarity with search engines</label>
-            <input id="search-engine-familiarity" type="range" min="1" max="7" value="${escapeHtml(onboardingState.demographics.searchEngineFamiliarity)}" />
-            <span class="scale-value">Current value: <strong id="search-engine-familiarity-value">${escapeHtml(onboardingState.demographics.searchEngineFamiliarity)}</strong> / 7</span>
-          </div>
-          <div class="field-group full-width">
-            <label for="conversational-ai-familiarity">Familiarity with conversational AI tools (e.g., ChatGPT)</label>
-            <input id="conversational-ai-familiarity" type="range" min="1" max="7" value="${escapeHtml(onboardingState.demographics.conversationalAiFamiliarity)}" />
-            <span class="scale-value">Current value: <strong id="conversational-ai-familiarity-value">${escapeHtml(onboardingState.demographics.conversationalAiFamiliarity)}</strong> / 7</span>
-          </div>
-          <div class="field-group full-width">
-            <label for="technology-usage-frequency">Technology familiarity and usage: frequency of use</label>
-            <select id="technology-usage-frequency">
+            <label for="conversational-ai-use-frequency">Conversational AI tool use frequency</label>
+            <select id="conversational-ai-use-frequency">
               ${renderSelectOptions(
-                ["", "Daily", "Weekly", "Monthly", "Rarely"],
-                onboardingState.demographics.technologyUsageFrequency,
-                "Select frequency of use"
+                ["", ...FREQUENCY_OPTIONS],
+                onboardingState.demographics.conversationalAiUseFrequency,
+                "Select frequency"
               )}
             </select>
           </div>
@@ -2145,8 +2190,13 @@ function renderOnboardingStep() {
       </section>
     `;
 
-    attachScaleMirror("search-engine-familiarity", "search-engine-familiarity-value");
-    attachScaleMirror("conversational-ai-familiarity", "conversational-ai-familiarity-value");
+    const nativeLanguageSelect = document.getElementById("native-language-english");
+    const englishAgeGroup = document.getElementById("english-learning-age-group");
+    const updateEnglishAgeVisibility = () => {
+      englishAgeGroup.classList.toggle("hidden", nativeLanguageSelect.value !== "No");
+    };
+    nativeLanguageSelect.addEventListener("change", updateEnglishAgeVisibility);
+    updateEnglishAgeVisibility();
     return;
   }
 
@@ -2194,76 +2244,6 @@ function renderOnboardingStep() {
     return;
   }
 
-  if (step === "subgoals") {
-    onboardingTitle.textContent = "Initial Sub-goal Planning";
-    onboardingSubtitle.textContent =
-      "Define exactly three sub-goals for the next learning phase. These will be stored in Firestore.";
-    onboardingNext.textContent = "Submit Week 0";
-    onboardingContent.innerHTML = `
-      <section class="onboarding-section">
-        <div class="subgoal-list">
-          ${onboardingState.subgoals
-            .map(
-              (goal, index) => `
-                <article class="subgoal-card">
-                  <h3>Sub-goal ${index + 1}</h3>
-                  <div class="form-grid">
-                    <div class="field-group full-width">
-                      <label for="goal-question-${index}">Goal question</label>
-                      <input
-                        id="goal-question-${index}"
-                        type="text"
-                        value="${escapeHtml(goal.question)}"
-                        placeholder="What do you want to understand or achieve?"
-                      />
-                    </div>
-                    <div class="field-group">
-                      <label for="goal-type-${index}">Goal type</label>
-                      <select id="goal-type-${index}">
-                        ${renderSelectOptions(
-                          ["Concept", "Evidence", "Comparison", "Application"],
-                          goal.type
-                        )}
-                      </select>
-                    </div>
-                    <div class="field-group">
-                      <label for="goal-importance-${index}">Importance</label>
-                      <input
-                        id="goal-importance-${index}"
-                        type="range"
-                        min="1"
-                        max="7"
-                        value="${escapeHtml(goal.importance)}"
-                      />
-                      <span class="scale-value">Current value: <strong id="goal-importance-value-${index}">${escapeHtml(goal.importance)}</strong> / 7</span>
-                    </div>
-                    <div class="field-group full-width">
-                      <label for="goal-confidence-${index}">Confidence</label>
-                      <input
-                        id="goal-confidence-${index}"
-                        type="range"
-                        min="1"
-                        max="7"
-                        value="${escapeHtml(goal.confidence)}"
-                      />
-                      <span class="scale-value">Current value: <strong id="goal-confidence-value-${index}">${escapeHtml(goal.confidence)}</strong> / 7</span>
-                    </div>
-                  </div>
-                </article>
-              `
-            )
-            .join("")}
-        </div>
-      </section>
-    `;
-
-    onboardingState.subgoals.forEach((_, index) => {
-      attachScaleMirror(`goal-importance-${index}`, `goal-importance-value-${index}`);
-      attachScaleMirror(`goal-confidence-${index}`, `goal-confidence-value-${index}`);
-    });
-    return;
-  }
-
   // Complete step
   onboardingTitle.textContent = "Week 0 Completed";
   onboardingSubtitle.textContent =
@@ -2275,7 +2255,7 @@ function renderOnboardingStep() {
       <div class="onboarding-panel">
         <p class="onboarding-copy">
           Thank you for completing the onboarding phase. Your consent response, demographic profile,
-          baseline framework data, and initial sub-goals have been stored for the next stage.
+          and baseline framework data have been stored for the next stage.
         </p>
       </div>
     </section>
@@ -2297,21 +2277,33 @@ function readAndValidateCurrentStep() {
 
   if (onboardingState.step === "demographics") {
     onboardingState.demographics = {
-      ageRange: document.getElementById("age-range").value,
-      primaryLanguage: document.getElementById("primary-language").value.trim(),
+      gender: document.getElementById("gender").value,
+      age: document.getElementById("age").value,
       educationLevel: document.getElementById("education-level").value,
-      searchEngineFamiliarity: document.getElementById("search-engine-familiarity").value,
-      conversationalAiFamiliarity: document.getElementById("conversational-ai-familiarity").value,
-      technologyUsageFrequency: document.getElementById("technology-usage-frequency").value,
+      nativeLanguageEnglish: document.getElementById("native-language-english").value,
+      englishLearningStartAge: document.getElementById("english-learning-start-age").value,
+      searchEngineUseFrequency: document.getElementById("search-engine-use-frequency").value,
+      conversationalAiUseFrequency: document.getElementById("conversational-ai-use-frequency").value,
     };
 
     if (
-      !onboardingState.demographics.ageRange ||
-      !onboardingState.demographics.primaryLanguage ||
+      !onboardingState.demographics.gender ||
+      !onboardingState.demographics.age ||
       !onboardingState.demographics.educationLevel ||
-      !onboardingState.demographics.technologyUsageFrequency
+      !onboardingState.demographics.nativeLanguageEnglish ||
+      !onboardingState.demographics.searchEngineUseFrequency ||
+      !onboardingState.demographics.conversationalAiUseFrequency
     ) {
       return "Please complete all required demographic fields.";
+    }
+    if (
+      onboardingState.demographics.nativeLanguageEnglish === "No" &&
+      !onboardingState.demographics.englishLearningStartAge
+    ) {
+      return "Please select the age when you started learning English.";
+    }
+    if (onboardingState.demographics.nativeLanguageEnglish === "Yes") {
+      onboardingState.demographics.englishLearningStartAge = "";
     }
     return "";
   }
@@ -2323,23 +2315,6 @@ function readAndValidateCurrentStep() {
       answers[question.id] = selected ? selected.value : "";
     });
     onboardingState.quizAnswers = answers;
-    return "";
-  }
-
-  if (onboardingState.step === "subgoals") {
-    const nextGoals = onboardingState.subgoals.map((_goal, index) => ({
-      question: document.getElementById(`goal-question-${index}`).value.trim(),
-      type: document.getElementById(`goal-type-${index}`).value,
-      importance: document.getElementById(`goal-importance-${index}`).value,
-      confidence: document.getElementById(`goal-confidence-${index}`).value,
-    }));
-
-    const incompleteGoal = nextGoals.find((goal) => !goal.question || !goal.type);
-    if (incompleteGoal) {
-      return "Please complete all three sub-goal entries before submitting Week 0.";
-    }
-
-    onboardingState.subgoals = nextGoals;
     return "";
   }
 
@@ -2356,44 +2331,17 @@ async function persistOnboardingProgress() {
   };
 
   await saveUserOnboarding(currentUserId, userDocPayload);
-
-  if (onboardingState.subgoals.length === 3) {
-    await saveWeek0Subgoals(currentUserId, onboardingState.subgoals);
-  }
 }
 
 // ── Week Flow Validation & Persistence ───────────────────────────────────────
 function readAndValidateWeekStep() {
-  if (weekFlowState.step === "delayedTest") {
-    const answers = {};
-    const questions = getDelayedTestQuestions(weekFlowState.weekId);
-
-    for (const question of questions) {
-      if (question.type === "shortAnswer") {
-        const value = document.getElementById(question.id).value.trim();
-        if (!value) return "Please answer all delayed-test questions before continuing.";
-        answers[question.id] = value;
-        continue;
-      }
-
-      const selected = document.querySelector(`input[name="${question.id}"]:checked`);
-      if (!selected) return "Please answer all delayed-test questions before continuing.";
-      answers[question.id] = selected.value;
-    }
-
-    weekFlowState.delayedTestAnswers = answers;
-    return "";
-  }
-
   const nextGoals = weekFlowState.subgoals.map((_goal, index) => ({
+    order: index + 1,
     question: document.getElementById(`weekly-goal-question-${index}`).value.trim(),
-    type: document.getElementById(`weekly-goal-type-${index}`).value,
-    importance: document.getElementById(`weekly-goal-importance-${index}`).value,
-    confidence: document.getElementById(`weekly-goal-confidence-${index}`).value,
+    status: "not_started",
   }));
 
-  const incompleteGoal = nextGoals.find((goal) => !goal.question || !goal.type);
-  if (incompleteGoal) return "Please complete all three weekly sub-goals before continuing.";
+  if (!nextGoals[0].question) return "Please complete Goal 1 before continuing.";
 
   weekFlowState.subgoals = nextGoals;
   return "";
@@ -2405,19 +2353,217 @@ async function persistWeekFlowState() {
 
   const payload = {
     ...currentWeek,
-    delayedTestCompleted:
-      weekId === "week1"
-        ? true
-        : weekFlowState.step === "delayedTest"
-          ? true
-          : Boolean(currentWeek.delayedTestCompleted),
-    subgoalsCompleted: weekFlowState.step === "subgoals",
-    delayedTestAnswers: weekId === "week1" ? {} : weekFlowState.delayedTestAnswers,
+    subgoalsCompleted: true,
     subgoals: weekFlowState.subgoals,
+    goalPlanning: {
+      ...(currentWeek.goalPlanning || {}),
+      [getSessionKey(weekId, "session2")]: {
+        weekId,
+        sessionId: getSessionKey(weekId, "session2"),
+        goals: weekFlowState.subgoals,
+        learningGoalStatement: getLearningGoalStatement(weekId),
+        submittedAt: new Date().toISOString(),
+      },
+    },
+    sessions: upsertWeekSession(currentWeek, weekId, "session2", {
+      status: "in_progress",
+      goalPlanningCompleted: true,
+    }),
   };
 
   dashboardState.weeks[weekId] = payload;
   await saveUserWeek(currentUserId, weekId, payload);
+}
+
+// ── Learning Session Completion / Outcome Flow ───────────────────────────────
+async function beginLearningSession(weekId, sessionType) {
+  const now = new Date().toISOString();
+  const weekState = dashboardState.weeks[weekId] || {};
+  const sessionKey = getSessionKey(weekId, sessionType);
+  const sessionPatch = {
+    status: "in_progress",
+    learningStartedAt: getWeekSessionState(weekState, weekId, sessionType).learningStartedAt || now,
+  };
+  if (sessionType === "session1") sessionPatch.videoCompleted = true;
+  if (sessionType === "session2") sessionPatch.goalPlanningCompleted = true;
+
+  activeLearningSession = { weekId, sessionType, sessionKey };
+  dashboardState.currentWeek = weekId;
+  dashboardState.currentSession = sessionType;
+  dashboardState.weeks[weekId] = {
+    ...weekState,
+    status: "in_progress",
+    structuredStatus: sessionType === "session1" ? "in_progress" : weekState.structuredStatus,
+    exploratoryStatus: sessionType === "session2" ? "in_progress" : weekState.exploratoryStatus,
+    structuredStep: sessionType === "session1" ? "learning" : weekState.structuredStep,
+    sessions: upsertWeekSession(weekState, weekId, sessionType, sessionPatch),
+  };
+
+  await saveUserStudyProfile(currentUserId, {
+    currentWeek: dashboardState.currentWeek,
+    currentSession: dashboardState.currentSession,
+    assignedCondition: dashboardState.assignedCondition,
+    weekProgress: summarizeWeekProgress(),
+  });
+  await saveUserWeek(currentUserId, weekId, dashboardState.weeks[weekId]);
+  showAppView();
+}
+
+async function completeLearningSession() {
+  if (!activeLearningSession) return;
+  stopCountdown();
+  const { weekId, sessionType, sessionKey } = activeLearningSession;
+  const now = new Date().toISOString();
+  const weekState = dashboardState.weeks[weekId] || {};
+
+  dashboardState.weeks[weekId] = {
+    ...weekState,
+    structuredStep: sessionType === "session1" ? "outcome" : weekState.structuredStep,
+    sessions: upsertWeekSession(weekState, weekId, sessionType, {
+      status: "in_progress",
+      learningCompletedAt: now,
+    }),
+  };
+  await saveUserWeek(currentUserId, weekId, dashboardState.weeks[weekId]);
+  learningOutcomeState = {
+    weekId,
+    sessionKey,
+    step: "summary",
+    summary: "",
+    wordCount: 0,
+    answers: {},
+  };
+  showLearningOutcomeView();
+}
+
+function renderLearningOutcomeStep() {
+  const weekLabel = formatWeekLabel(learningOutcomeState.weekId);
+  learningOutcomeEyebrow.textContent = `${weekLabel} · ${formatSessionNumber(learningOutcomeState.sessionKey)} Outcome`;
+  learningOutcomeValidation.textContent = "";
+
+  if (learningOutcomeState.step === "summary") {
+    learningOutcomeTitle.textContent = "Learning Summary";
+    learningOutcomeSubtitle.textContent = "Write at least 50 words before continuing.";
+    learningOutcomeNext.textContent = "Submit Summary";
+    learningOutcomeContent.innerHTML = `
+      <section class="onboarding-section">
+        <div class="field-group full-width">
+          <label for="learning-summary">Please summarize what you learned today.</label>
+          <textarea id="learning-summary" rows="10" placeholder="Write your summary here...">${escapeHtml(learningOutcomeState.summary)}</textarea>
+          <span class="scale-value"><strong id="learning-summary-word-count">${learningOutcomeState.wordCount}</strong> / 50 words minimum</span>
+        </div>
+      </section>
+    `;
+    const textarea = document.getElementById("learning-summary");
+    const count = document.getElementById("learning-summary-word-count");
+    textarea.addEventListener("input", () => {
+      count.textContent = String(countWords(textarea.value));
+    });
+    return;
+  }
+
+  learningOutcomeTitle.textContent = "Comprehension Questions";
+  learningOutcomeSubtitle.textContent =
+    "Placeholder questions are shown now. The component can later load real questions from Firestore.";
+  learningOutcomeNext.textContent = "Submit Outcome";
+  learningOutcomeContent.innerHTML = `
+    <section class="onboarding-section">
+      <div class="quiz-list">
+        ${PLACEHOLDER_OUTCOME_QUESTIONS.map((question, index) =>
+          renderOutcomeQuestionCard(question, index)
+        ).join("")}
+      </div>
+    </section>
+  `;
+}
+
+async function readAndPersistLearningOutcomeStep() {
+  if (learningOutcomeState.step === "summary") {
+    const summary = document.getElementById("learning-summary").value.trim();
+    const wordCount = countWords(summary);
+    if (wordCount < 50) return "Please write at least 50 words before continuing.";
+    learningOutcomeState.summary = summary;
+    learningOutcomeState.wordCount = wordCount;
+    return "";
+  }
+
+  const answers = {};
+  for (const question of PLACEHOLDER_OUTCOME_QUESTIONS) {
+    const selected = document.querySelector(`input[name="${question.id}"]:checked`);
+    if (!selected) return "Please answer all comprehension questions before submitting.";
+    answers[question.id] = selected.value;
+  }
+  learningOutcomeState.answers = answers;
+  return "";
+}
+
+function renderOutcomeQuestionCard(question, index) {
+  return `
+    <article class="question-card">
+      <h3>Question ${index + 1}</h3>
+      <p class="onboarding-copy">${escapeHtml(question.prompt)}</p>
+      <div class="option-list">
+        ${question.options
+          .map(
+            (option) => `
+              <label>
+                <input
+                  type="radio"
+                  name="${question.id}"
+                  value="${escapeHtml(option)}"
+                  ${learningOutcomeState.answers[question.id] === option ? "checked" : ""}
+                />
+                ${escapeHtml(option)}
+              </label>
+            `
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
+async function finalizeLearningOutcome() {
+  const { weekId, sessionKey, summary, wordCount, answers } = learningOutcomeState;
+  const sessionType = sessionKey.endsWith("_session1") ? "session1" : "session2";
+  const weekState = dashboardState.weeks[weekId] || {};
+  const now = new Date().toISOString();
+
+  await saveLearningOutcome(currentUserId, {
+    summary,
+    wordCount,
+    comprehensionAnswers: answers,
+    sessionId: sessionKey,
+    weekId,
+    userId: currentUserId,
+  });
+
+  dashboardState.weeks[weekId] = {
+    ...weekState,
+    structuredStatus: sessionType === "session1" ? "completed" : weekState.structuredStatus,
+    exploratoryStatus: sessionType === "session2" ? "completed" : weekState.exploratoryStatus,
+    structuredStep: sessionType === "session1" ? "completed" : weekState.structuredStep,
+    structuredCompletedAt: sessionType === "session1" ? now : weekState.structuredCompletedAt,
+    exploratoryCompletedAt: sessionType === "session2" ? now : weekState.exploratoryCompletedAt,
+    sessionsCompleted: sessionType === "session2" ? true : weekState.sessionsCompleted,
+    status: isWeekCompleteById(weekId, {
+      ...weekState,
+      structuredStatus: sessionType === "session1" ? "completed" : weekState.structuredStatus,
+      exploratoryStatus: sessionType === "session2" ? "completed" : weekState.exploratoryStatus,
+    })
+      ? "completed"
+      : weekState.status,
+    sessions: upsertWeekSession(weekState, weekId, sessionType, {
+      status: "completed",
+      learningOutcomeCompleted: true,
+      updatedAt: now,
+    }),
+  };
+  await saveUserWeek(currentUserId, weekId, dashboardState.weeks[weekId]);
+  activeLearningSession = null;
+  learningOutcomeState = { weekId: "", sessionKey: "", step: "summary", summary: "", wordCount: 0, answers: {} };
+  await loadDashboardState();
+  showDashboardView();
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -2449,6 +2595,84 @@ function renderSelectOptions(options, selectedValue, placeholder) {
   return rendered.join("");
 }
 
+function renderAgeOptions(selectedValue) {
+  const ages = Array.from({ length: 68 }, (_, index) => String(index + 18));
+  return renderSelectOptions(["", ...ages], String(selectedValue || ""), "Select age");
+}
+
+function countWords(text) {
+  return String(text || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+function getSessionKey(weekId, sessionType) {
+  return `${weekId}_${sessionType}`;
+}
+
+function formatSessionLabel(weekId, sessionType) {
+  return `${formatWeekLabel(weekId)} ${sessionType === "session1" ? "Session 1" : "Session 2"}`;
+}
+
+function formatSessionNumber(sessionKey) {
+  return sessionKey.endsWith("_session1") ? "Session 1" : "Session 2";
+}
+
+function getLearningGoalStatement(weekId) {
+  // TODO: Load real learning goal statements from Firestore when Adrian and Kylie provide them.
+  return PLACEHOLDER_LEARNING_GOALS[weekId] || "Placeholder learning goal statement.";
+}
+
+function createDefaultSessionProgress(weekId, sessionType) {
+  return {
+    sessionId: getSessionKey(weekId, sessionType),
+    status: "not_started",
+    videoCompleted: sessionType === "session1" ? false : null,
+    goalPlanningCompleted: sessionType === "session2" ? false : null,
+    learningStartedAt: null,
+    learningCompletedAt: null,
+    learningOutcomeCompleted: false,
+    updatedAt: null,
+  };
+}
+
+function normalizeWeekSessions(weekState, weekId) {
+  const existing = weekState.sessions && !Array.isArray(weekState.sessions) ? weekState.sessions : {};
+  return {
+    [getSessionKey(weekId, "session1")]: {
+      ...createDefaultSessionProgress(weekId, "session1"),
+      ...(existing[getSessionKey(weekId, "session1")] || {}),
+    },
+    [getSessionKey(weekId, "session2")]: {
+      ...createDefaultSessionProgress(weekId, "session2"),
+      ...(existing[getSessionKey(weekId, "session2")] || {}),
+    },
+  };
+}
+
+function getWeekSessionState(weekState, weekId, sessionType) {
+  return normalizeWeekSessions(weekState || {}, weekId)[getSessionKey(weekId, sessionType)];
+}
+
+function upsertWeekSession(weekState, weekId, sessionType, patch) {
+  const sessions = normalizeWeekSessions(weekState || {}, weekId);
+  const key = getSessionKey(weekId, sessionType);
+  sessions[key] = {
+    ...sessions[key],
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  return sessions;
+}
+
+function isSessionComplete(weekId, weekState, sessionType) {
+  const sessionState = getWeekSessionState(weekState || {}, weekId, sessionType);
+  if (sessionState.learningOutcomeCompleted || sessionState.status === "completed") return true;
+  if (sessionType === "session1") return weekState?.structuredStatus === "completed";
+  return weekState?.exploratoryStatus === "completed" || Boolean(weekState?.sessionsCompleted);
+}
+
 // ── Default State Factories ───────────────────────────────────────────────────
 function createDefaultSubgoals() {
   return [createDefaultSubgoal(1), createDefaultSubgoal(2), createDefaultSubgoal(3)];
@@ -2466,7 +2690,7 @@ function createDefaultWeeks() {
       // New per-session status fields (8-session model)
       structuredStatus: "not_started",
       exploratoryStatus: "not_started",
-      structuredStep: "instructions",   // "instructions" | "assessment" | "completed"
+      structuredStep: "video",
       structuredCompletedAt: null,
       exploratoryStartedAt: null,
       exploratoryCompletedAt: null,
@@ -2479,7 +2703,10 @@ function createDefaultWeeks() {
       subgoals: createDefaultWeekSubgoals(),
       currentSessionIndex: 0,
       sessionTimeRemaining: 25 * 60,
-      sessions: [null, null, null],
+      sessions: {
+        [getSessionKey(week.id, "session1")]: createDefaultSessionProgress(week.id, "session1"),
+        [getSessionKey(week.id, "session2")]: createDefaultSessionProgress(week.id, "session2"),
+      },
     };
     return acc;
   }, {});
@@ -2510,12 +2737,13 @@ function resetOnboardingState() {
   onboardingState.completed = false;
   onboardingState.consentAgreed = false;
   onboardingState.demographics = {
-    ageRange: "",
-    primaryLanguage: "",
+    gender: "",
+    age: "",
     educationLevel: "",
-    searchEngineFamiliarity: "4",
-    conversationalAiFamiliarity: "4",
-    technologyUsageFrequency: "",
+    nativeLanguageEnglish: "",
+    englishLearningStartAge: "",
+    searchEngineUseFrequency: "",
+    conversationalAiUseFrequency: "",
   };
   onboardingState.quizAnswers = {};
   onboardingState.subgoals = createDefaultSubgoals();
@@ -2568,10 +2796,15 @@ function resetResearchToolState() {
 // A week is fully complete when BOTH sessions are done.
 // Also checks the legacy sessionsCompleted field for backward compatibility.
 function isWeekComplete(weekState) {
-  const structuredDone = weekState.structuredStatus === "completed";
-  const exploratoryDone =
-    weekState.exploratoryStatus === "completed" || Boolean(weekState.sessionsCompleted);
-  return structuredDone && exploratoryDone;
+  const weekId = weekDefinitions.find(
+    (week) => dashboardState.weeks[week.id] === weekState || weekState?.sessions?.[getSessionKey(week.id, "session1")]
+  )?.id;
+  if (!weekId) return false;
+  return isSessionComplete(weekId, weekState, "session1") && isSessionComplete(weekId, weekState, "session2");
+}
+
+function isWeekCompleteById(weekId, weekState) {
+  return isSessionComplete(weekId, weekState || {}, "session1") && isSessionComplete(weekId, weekState || {}, "session2");
 }
 
 // Week 1 is always unlocked. Later weeks unlock when the previous week is fully complete.
@@ -2579,12 +2812,12 @@ function isWeekUnlocked(weekId) {
   const currentIndex = weekDefinitions.findIndex((w) => w.id === weekId);
   if (currentIndex <= 0) return true;
   const previousWeekId = weekDefinitions[currentIndex - 1].id;
-  return isWeekComplete(dashboardState.weeks[previousWeekId] || {});
+  return isWeekCompleteById(previousWeekId, dashboardState.weeks[previousWeekId] || {});
 }
 
 function countCompletedWeeks() {
   return weekDefinitions.filter((week) =>
-    isWeekComplete(dashboardState.weeks[week.id])
+    isWeekCompleteById(week.id, dashboardState.weeks[week.id])
   ).length;
 }
 
@@ -2593,27 +2826,28 @@ function getNextSessionDescription() {
   for (const week of weekDefinitions) {
     const state = dashboardState.weeks[week.id];
     if (!isWeekUnlocked(week.id)) continue;
-    if (state.structuredStatus !== "completed") {
-      return `${formatWeekLabel(week.id)} Structured Session`;
+    if (!isSessionComplete(week.id, state, "session1")) {
+      return formatSessionLabel(week.id, "session1");
     }
-    if ((state.exploratoryStatus || "not_started") !== "completed") {
-      return `${formatWeekLabel(week.id)} Exploratory Session`;
+    if (!isSessionComplete(week.id, state, "session2")) {
+      return formatSessionLabel(week.id, "session2");
     }
   }
   return "All sessions complete";
 }
 
 function inferCurrentWeek(weekData) {
-  // Prefer a week that has an in-progress exploratory session
+  // Prefer a week that has an in-progress required session.
   const active = weekDefinitions.find(
     (week) =>
       weekData[week.id] &&
-      (weekData[week.id].exploratoryStatus === "in_progress" ||
+      (weekData[week.id].structuredStatus === "in_progress" ||
+        weekData[week.id].exploratoryStatus === "in_progress" ||
         weekData[week.id].status === "in_progress")
   );
   if (active) return active.id;
 
-  const next = weekDefinitions.find((week) => !isWeekComplete(weekData[week.id] || {}));
+  const next = weekDefinitions.find((week) => !isWeekCompleteById(week.id, weekData[week.id] || {}));
   return next ? next.id : weekDefinitions[weekDefinitions.length - 1].id;
 }
 
@@ -2632,6 +2866,7 @@ function summarizeWeekProgress() {
     acc[week.id] = {
       structuredStatus: weekState.structuredStatus || "not_started",
       exploratoryStatus: weekState.exploratoryStatus || "not_started",
+      sessions: normalizeWeekSessions(weekState, week.id),
       status: weekState.status,
       delayedTestCompleted: weekState.delayedTestCompleted,
       subgoalsCompleted: weekState.subgoalsCompleted,

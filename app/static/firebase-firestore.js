@@ -32,6 +32,22 @@ function requireDb() {
   return firestoreDb;
 }
 
+function removeUndefinedFields(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => removeUndefinedFields(item));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entryValue]) => entryValue !== undefined)
+        .map(([key, entryValue]) => [key, removeUndefinedFields(entryValue)])
+    );
+  }
+
+  return value;
+}
+
 export async function getUserOnboarding(uid) {
   const db = requireDb();
   const userRef = doc(db, "users", uid);
@@ -52,7 +68,7 @@ export async function saveUserOnboarding(uid, payload) {
   await setDoc(
     userRef,
     {
-      ...payload,
+      ...removeUndefinedFields(payload),
       updatedAt: serverTimestamp(),
     },
     { merge: true }
@@ -95,7 +111,7 @@ export async function saveUserStudyProfile(uid, payload) {
   await setDoc(
     userRef,
     {
-      ...payload,
+      ...removeUndefinedFields(payload),
       updatedAt: serverTimestamp(),
     },
     { merge: true }
@@ -109,7 +125,7 @@ export async function saveUserWeek(uid, weekId, payload) {
   await setDoc(
     weekRef,
     {
-      ...payload,
+      ...removeUndefinedFields(payload),
       updatedAt: serverTimestamp(),
     },
     { merge: true }
@@ -137,6 +153,17 @@ export async function saveStructuredSession(uid, weekId, answers) {
   const db = requireDb();
   const ref = doc(db, "users", uid, "weeks", weekId, "structuredAssessment", "answers");
   await setDoc(ref, { answers, submittedAt: serverTimestamp() }, { merge: true });
+}
+
+export async function saveLearningOutcome(uid, payload) {
+  const db = requireDb();
+  const ref = collection(db, "users", uid, "learningOutcomes");
+
+  await addDoc(ref, {
+    ...payload,
+    userId: uid,
+    timestamp: serverTimestamp(),
+  });
 }
 
 export async function saveQuickEvaluation(uid, payload) {

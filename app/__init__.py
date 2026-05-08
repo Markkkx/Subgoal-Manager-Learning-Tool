@@ -240,24 +240,35 @@ def create_app() -> Flask:
                 400,
             )
 
-        if payload.get("rating") in (None, "") and payload.get("reason") in (None, ""):
-            return jsonify({"error": "rating or reason is required"}), 400
+        if (
+            payload.get("rating") in (None, "")
+            and payload.get("reason") in (None, "")
+            and payload.get("ratings") in (None, "")
+        ):
+            return jsonify({"error": "rating, ratings, or reason is required"}), 400
 
         evaluation_event = {
             "user_id": payload["user_id"],
             "session_id": payload["session_id"],
             "week": payload["week"],
+            "week_id": payload.get("week_id", payload["week"]),
             "session": payload["session"],
             "tool": payload["tool"],
+            "tool_type": payload.get("tool_type", payload["tool"]),
+            "source_type": payload.get("source_type", ""),
             "evaluation_event_type": payload["evaluation_event_type"],
             "rating": payload.get("rating"),
+            "ratings": payload.get("ratings"),
             "reason": payload.get("reason"),
             "evaluation_timestamp": payload.get("evaluation_timestamp"),
             "query_text": payload.get("query_text", ""),
             "clicked_url": payload.get("clicked_url", ""),
+            "url": payload.get("url", ""),
             "clicked_rank": payload.get("clicked_rank"),
             "chat_question": payload.get("chat_question", ""),
             "chat_answer": payload.get("chat_answer", ""),
+            "prompt": payload.get("prompt", ""),
+            "response_id": payload.get("response_id", ""),
             "previous_tool": payload.get("previous_tool", ""),
             "next_tool": payload.get("next_tool", ""),
             "returned_at": payload.get("returned_at", ""),

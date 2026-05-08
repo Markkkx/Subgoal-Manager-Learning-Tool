@@ -139,12 +139,12 @@
         </div>
       </section>
 
-      <!-- Exploratory Session Shell (delayed test + subgoal planning before app-shell) -->
+      <!-- Session 2 shell (learning goal statement + goal planning before app-shell) -->
       <section id="week-shell" class="week-shell hidden">
         <div class="week-card">
           <div class="week-header">
             <div>
-              <p class="eyebrow" id="week-shell-eyebrow">Exploratory Session</p>
+              <p class="eyebrow" id="week-shell-eyebrow">Session 2</p>
               <h1 id="week-shell-title" class="onboarding-title"></h1>
               <p id="week-shell-subtitle" class="onboarding-subtitle"></p>
             </div>
@@ -160,12 +160,12 @@
         </div>
       </section>
 
-      <!-- Structured Session Shell (instruction page + placeholder assessment) -->
+      <!-- Session 1 shell (required lecture video before app-shell) -->
       <section id="structured-session-shell" class="week-shell hidden">
         <div class="week-card">
           <div class="week-header">
             <div>
-              <p class="eyebrow" id="structured-session-eyebrow">Structured Session</p>
+              <p class="eyebrow" id="structured-session-eyebrow">Session 1</p>
               <h1 id="structured-session-title" class="onboarding-title"></h1>
               <p id="structured-session-subtitle" class="onboarding-subtitle"></p>
             </div>
@@ -181,6 +181,26 @@
         </div>
       </section>
 
+      <section id="learning-outcome-shell" class="week-shell hidden">
+        <div class="week-card">
+          <div class="week-header">
+            <div>
+              <p class="eyebrow" id="learning-outcome-eyebrow">Learning Outcome</p>
+              <h1 id="learning-outcome-title" class="onboarding-title"></h1>
+              <p id="learning-outcome-subtitle" class="onboarding-subtitle"></p>
+            </div>
+          </div>
+
+          <div id="learning-outcome-content" class="onboarding-content"></div>
+          <p id="learning-outcome-validation" class="validation-message"></p>
+
+          <div class="onboarding-actions">
+            <button id="learning-outcome-back" class="secondary-action" type="button">Back to Dashboard</button>
+            <button id="learning-outcome-next" class="primary-action" type="button">Continue</button>
+          </div>
+        </div>
+      </section>
+
       <section id="app-shell" class="app-shell hidden">
         <div class="app-topbar">
           <div class="session-pill">
@@ -188,11 +208,13 @@
             <span id="auth-user-display"></span>
           </div>
           <div class="topbar-right">
-            <span id="session-indicator" class="session-indicator">Session 1 of 3</span>
             <div class="countdown-bar-wrap">
               <div id="countdown-bar" class="countdown-bar"></div>
-              <span id="countdown-label" class="countdown-label">25:00</span>
+              <span id="countdown-label" class="countdown-label">00:00</span>
             </div>
+            <button id="complete-learning-button" class="complete-learning-button" type="button" disabled>
+              Complete Learning
+            </button>
             <button id="back-to-dashboard-button" class="back-dashboard-button" type="button">← Dashboard</button>
             <button id="logout-button" class="logout-button" type="button">Log Out</button>
           </div>
@@ -218,7 +240,7 @@
                 aria-controls="browser-search-panel"
                 aria-selected="true"
               >
-                Browser Search
+                Web Search
               </button>
               <button
                 id="ai-chat-search-tab"
@@ -234,7 +256,7 @@
 
             <section id="browser-search-panel" class="tool-panel search-shell" data-tool-panel="browser">
               <div class="panel-header">
-                <h2>Browser Search</h2>
+                <h2>Web Search</h2>
                 <span class="panel-tag">Web</span>
               </div>
 

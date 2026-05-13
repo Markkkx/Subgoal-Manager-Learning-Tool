@@ -78,6 +78,7 @@ Each `sessions.{weekId_sessionN}` item includes:
 | `goalPlanningCompleted` | boolean/null | Session 2 only. |
 | `learningStartedAt` | string/null | ISO timestamp. |
 | `learningCompletedAt` | string/null | ISO timestamp. |
+| `learningElapsedSeconds` | number | Active seconds spent on the learning/search page; time on dashboard/logout is not counted. |
 | `learningOutcomeCompleted` | boolean | Whether summary and comprehension questions were submitted. |
 | `updatedAt` | string/null | Client ISO timestamp for progress updates. |
 

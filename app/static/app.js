@@ -128,6 +128,8 @@ let searchHasMore = false;
 let searchLoadingMore = false;
 let activeLearningSession = null;
 let learningTimerStartedAt = null;
+let learningTimerBaseElapsedSeconds = 0;
+let learningTimerPersistInterval = null;
 let learningOutcomeState = {
   weekId: "",
   sessionKey: "",
@@ -403,8 +405,21 @@ authForm.addEventListener("submit", async (event) => {
   }
 });
 
-logoutButton.addEventListener("click", async () => { await logoutUser(); });
-dashboardLogoutButton.addEventListener("click", async () => { await logoutUser(); });
+logoutButton.addEventListener("click", async () => {
+  await persistActiveLearningElapsed();
+  stopCountdown();
+  await logoutUser();
+});
+dashboardLogoutButton.addEventListener("click", async () => {
+  await persistActiveLearningElapsed();
+  stopCountdown();
+  await logoutUser();
+});
+
+window.addEventListener("beforeunload", () => {
+  if (!activeLearningSession) return;
+  cacheLearningElapsedSeconds(getCurrentLearningElapsedSeconds());
+});
 
 if (completeLearningButton) {
   completeLearningButton.addEventListener("click", async () => {
@@ -501,6 +516,7 @@ structuredSessionBack.addEventListener("click", async () => {
       structuredStep: structuredSessionState.step,
     });
   }
+  activeLearningSession = null;
   await loadDashboardState();
   showDashboardView();
 });
@@ -568,6 +584,8 @@ function hideAllShells() {
 }
 
 function showAuthView() {
+  stopCountdown();
+  activeLearningSession = null;
   resetOnboardingState();
   resetDashboardState();
   resetWeekFlowState();
@@ -583,6 +601,7 @@ function showOnboardingView() {
 }
 
 function showDashboardView() {
+  stopCountdown();
   hideAllShells();
   dashboardShell.classList.remove("hidden");
   renderDashboard();
@@ -1364,6 +1383,7 @@ function renderSessionIndicator() {
 
 // ── Back to Dashboard ─────────────────────────────────────────────────────────
 document.getElementById("back-to-dashboard-button").addEventListener("click", async () => {
+  await persistActiveLearningElapsed();
   stopCountdown();
   if (weekFlowState.weekId) {
     const weekState = dashboardState.weeks[weekFlowState.weekId] || {};
@@ -1375,6 +1395,7 @@ document.getElementById("back-to-dashboard-button").addEventListener("click", as
       sessions: normalizeWeekSessions(weekState, weekFlowState.weekId),
     });
   }
+  activeLearningSession = null;
   await loadDashboardState();
   showDashboardView();
 });
@@ -1479,8 +1500,52 @@ function getDebugLearningElapsedSeconds() {
   return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 0;
 }
 
+function getLearningElapsedStorageKey(sessionKey = activeLearningSession?.sessionKey) {
+  if (!currentUserId || !sessionKey) return "";
+  return `learningElapsedSeconds:${currentUserId}:${sessionKey}`;
+}
+
+function readCachedLearningElapsedSeconds(sessionKey) {
+  const key = getLearningElapsedStorageKey(sessionKey);
+  if (!key) return 0;
+  const cachedValue = Number.parseInt(window.localStorage.getItem(key) || "0", 10);
+  return Number.isFinite(cachedValue) && cachedValue > 0 ? cachedValue : 0;
+}
+
+function cacheLearningElapsedSeconds(elapsedSeconds, sessionKey = activeLearningSession?.sessionKey) {
+  const key = getLearningElapsedStorageKey(sessionKey);
+  if (!key) return;
+  window.localStorage.setItem(key, String(Math.max(0, Math.floor(elapsedSeconds))));
+}
+
+function getCurrentLearningElapsedSeconds() {
+  if (!learningTimerStartedAt) return learningTimerBaseElapsedSeconds;
+  return Math.max(
+    0,
+    learningTimerBaseElapsedSeconds + Math.floor((Date.now() - learningTimerStartedAt.getTime()) / 1000)
+  );
+}
+
+async function persistActiveLearningElapsed() {
+  if (!activeLearningSession || !currentUserId) return;
+  const { weekId, sessionType } = activeLearningSession;
+  const elapsedSeconds = getCurrentLearningElapsedSeconds();
+  cacheLearningElapsedSeconds(elapsedSeconds);
+
+  const weekState = dashboardState.weeks[weekId] || {};
+  dashboardState.weeks[weekId] = {
+    ...weekState,
+    sessionTimeRemaining: elapsedSeconds,
+    sessions: upsertWeekSession(weekState, weekId, sessionType, {
+      learningElapsedSeconds: elapsedSeconds,
+    }),
+  };
+  await saveUserWeek(currentUserId, weekId, dashboardState.weeks[weekId]);
+}
+
 function startCountdown() {
   if (countdownInterval) clearInterval(countdownInterval);
+  if (learningTimerPersistInterval) clearInterval(learningTimerPersistInterval);
   const bar = document.getElementById("countdown-bar");
   const label = document.getElementById("countdown-label");
   // Local testing helper: append ?debugLearningElapsed=1501 to the URL to
@@ -1490,15 +1555,15 @@ function startCountdown() {
   const savedSession = activeLearningSession
     ? getWeekSessionState(activeWeek || {}, activeLearningSession.weekId, activeLearningSession.sessionType)
     : null;
-  learningTimerStartedAt = savedSession?.learningStartedAt
-    ? new Date(savedSession.learningStartedAt)
-    : new Date();
+  const savedElapsed = Number.parseInt(savedSession?.learningElapsedSeconds || "0", 10);
+  learningTimerBaseElapsedSeconds = Math.max(
+    Number.isFinite(savedElapsed) ? savedElapsed : 0,
+    readCachedLearningElapsedSeconds(activeLearningSession?.sessionKey)
+  );
+  learningTimerStartedAt = new Date();
 
   function tick() {
-    const elapsed = Math.max(
-      0,
-      Math.floor((Date.now() - learningTimerStartedAt.getTime()) / 1000) + debugElapsedOffset
-    );
+    const elapsed = getCurrentLearningElapsedSeconds() + debugElapsedOffset;
     const m = String(Math.floor(elapsed / 60)).padStart(2, "0");
     const s = String(elapsed % 60).padStart(2, "0");
     if (label) {
@@ -1518,9 +1583,15 @@ function startCountdown() {
       completeLearningButton.textContent =
         elapsed < LEARNING_MIN_SECONDS ? "Complete Learning" : "Complete Learning";
     }
+    cacheLearningElapsedSeconds(getCurrentLearningElapsedSeconds());
   }
   tick();
   countdownInterval = setInterval(tick, 1000);
+  learningTimerPersistInterval = setInterval(() => {
+    persistActiveLearningElapsed().catch((error) => {
+      console.error("Learning timer persist error:", error);
+    });
+  }, 15000);
 }
 
 function stopCountdown() {
@@ -1528,6 +1599,12 @@ function stopCountdown() {
     clearInterval(countdownInterval);
     countdownInterval = null;
   }
+  if (learningTimerPersistInterval) {
+    clearInterval(learningTimerPersistInterval);
+    learningTimerPersistInterval = null;
+  }
+  learningTimerBaseElapsedSeconds = getCurrentLearningElapsedSeconds();
+  learningTimerStartedAt = null;
 }
 
 // ── Search Results / Summary / Keywords ──────────────────────────────────────
@@ -2411,6 +2488,7 @@ async function beginLearningSession(weekId, sessionType) {
 
 async function completeLearningSession() {
   if (!activeLearningSession) return;
+  await persistActiveLearningElapsed();
   stopCountdown();
   const { weekId, sessionType, sessionKey } = activeLearningSession;
   const now = new Date().toISOString();
@@ -2632,6 +2710,7 @@ function createDefaultSessionProgress(weekId, sessionType) {
     goalPlanningCompleted: sessionType === "session2" ? false : null,
     learningStartedAt: null,
     learningCompletedAt: null,
+    learningElapsedSeconds: 0,
     learningOutcomeCompleted: false,
     updatedAt: null,
   };

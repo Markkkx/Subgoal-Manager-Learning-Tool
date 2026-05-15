@@ -87,7 +87,6 @@ Each weekly `subgoals[]` item may include:
 | Field | Type | Notes |
 | --- | --- | --- |
 | `question` | string | Weekly sub-goal question. |
-| `status` | string | Sidebar status such as `not_started`, `in_progress`, `completed`. |
 
 ### `users/{uid}/weeks/{weekId}.goalPlanning`
 
@@ -101,9 +100,10 @@ Session 2 goal planning map saved inside the existing week progress document to 
 | `goals` | array | Goal 1 required; Goals 2 and 3 optional. |
 | `submittedAt` | timestamp | Firestore server timestamp. |
 
-### `users/{uid}/learningOutcomes/{autoId}`
+### `users/{uid}/weeks/{weekId}.learningOutcomes`
 
-Learning outcome document for both Session 1 and Session 2. Written by `saveLearningOutcome()`.
+Learning outcome map for both Session 1 and Session 2, keyed by `sessionId`.
+Saved inside the existing week progress document to use the same Firestore permissions path.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -113,7 +113,7 @@ Learning outcome document for both Session 1 and Session 2. Written by `saveLear
 | `sessionId` | string | e.g. `week1_session1`. |
 | `weekId` | string | e.g. `week1`. |
 | `userId` | string | Firebase user uid. |
-| `timestamp` | timestamp | Firestore server timestamp. |
+| `timestamp` | string | Client ISO timestamp. |
 
 ### `users/{uid}/weeks/{weekId}/structuredAssessment/answers`
 

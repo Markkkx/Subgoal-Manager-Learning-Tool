@@ -157,13 +157,28 @@ export async function saveStructuredSession(uid, weekId, answers) {
 
 export async function saveLearningOutcome(uid, payload) {
   const db = requireDb();
-  const ref = collection(db, "users", uid, "learningOutcomes");
+  const weekId = payload.weekId;
+  const sessionId = payload.sessionId;
 
-  await addDoc(ref, {
-    ...payload,
-    userId: uid,
-    timestamp: serverTimestamp(),
-  });
+  if (!weekId || !sessionId) {
+    throw new Error("saveLearningOutcome requires weekId and sessionId.");
+  }
+
+  const weekRef = doc(db, "users", uid, "weeks", weekId);
+  await setDoc(
+    weekRef,
+    {
+      learningOutcomes: {
+        [sessionId]: removeUndefinedFields({
+          ...payload,
+          userId: uid,
+          timestamp: payload.timestamp || new Date().toISOString(),
+        }),
+      },
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
 }
 
 export async function saveQuickEvaluation(uid, payload) {

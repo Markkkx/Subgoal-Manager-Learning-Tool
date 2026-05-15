@@ -14,7 +14,6 @@ import {
   saveUserWeek,
   getPostTestQuestions,
   savePostTest,
-  saveLearningOutcome,
   saveQuickEvaluation,
 } from "./firebase-firestore.js";
 import { baselineQuizQuestions } from "./onboarding-quiz.js";
@@ -1305,7 +1304,7 @@ function renderSubgoalSidebar() {
     .map(
       (goal, i) =>
         `<div class="sidebar-dot-wrap" title="${escapeHtml(goal.question || `Subgoal ${i + 1}`)}">
-          <div class="sidebar-dot status-${goal.status || "not_started"}"></div>
+          <div class="sidebar-dot"></div>
         </div>`
     )
     .join("");
@@ -1314,36 +1313,13 @@ function renderSubgoalSidebar() {
     .map(
       (goal, i) => `
       <li class="sidebar-item">
-        <div class="sidebar-item-dot status-${goal.status || "not_started"}"></div>
+        <div class="sidebar-item-dot"></div>
         <div class="sidebar-item-body">
           <span class="sidebar-item-text" data-index="${i}" contenteditable="false">${escapeHtml(goal.question || `Subgoal ${i + 1}`)}</span>
-          <select class="sidebar-status-select" data-index="${i}">
-            <option value="not_started" ${(goal.status || "not_started") === "not_started" ? "selected" : ""}>Not Started</option>
-            <option value="in_progress" ${goal.status === "in_progress" ? "selected" : ""}>In Progress</option>
-            <option value="completed" ${goal.status === "completed" ? "selected" : ""}>Completed</option>
-          </select>
         </div>
       </li>`
     )
     .join("");
-
-  listContainer.querySelectorAll(".sidebar-status-select").forEach((select) => {
-    select.addEventListener("change", async (e) => {
-      const idx = parseInt(e.target.dataset.index);
-      const newStatus = e.target.value;
-      weekFlowState.subgoals[idx].status = newStatus;
-      renderSubgoalSidebar();
-      if (currentUserId && weekFlowState.weekId) {
-        await saveUserWeek(currentUserId, weekFlowState.weekId, {
-          ...dashboardState.weeks[weekFlowState.weekId],
-          subgoals: weekFlowState.subgoals,
-        });
-      }
-      if (newStatus === "completed" && idx === weekFlowState.currentSessionIndex) {
-        showMicroCheck(idx);
-      }
-    });
-  });
 
   listContainer.querySelectorAll(".sidebar-item-text").forEach((span) => {
     span.addEventListener("click", (e) => {
@@ -2415,7 +2391,6 @@ function readAndValidateWeekStep() {
   const nextGoals = weekFlowState.subgoals.map((_goal, index) => ({
     order: index + 1,
     question: document.getElementById(`weekly-goal-question-${index}`).value.trim(),
-    status: "not_started",
   }));
 
   if (!nextGoals[0].question) return "Please complete Goal 1 before continuing.";
@@ -2606,18 +2581,22 @@ async function finalizeLearningOutcome() {
   const sessionType = sessionKey.endsWith("_session1") ? "session1" : "session2";
   const weekState = dashboardState.weeks[weekId] || {};
   const now = new Date().toISOString();
-
-  await saveLearningOutcome(currentUserId, {
+  const outcomePayload = {
     summary,
     wordCount,
     comprehensionAnswers: answers,
     sessionId: sessionKey,
     weekId,
     userId: currentUserId,
-  });
+    timestamp: now,
+  };
 
   dashboardState.weeks[weekId] = {
     ...weekState,
+    learningOutcomes: {
+      ...(weekState.learningOutcomes || {}),
+      [sessionKey]: outcomePayload,
+    },
     structuredStatus: sessionType === "session1" ? "completed" : weekState.structuredStatus,
     exploratoryStatus: sessionType === "session2" ? "completed" : weekState.exploratoryStatus,
     structuredStep: sessionType === "session1" ? "completed" : weekState.structuredStep,
@@ -2803,10 +2782,6 @@ function createDefaultWeekSubgoal(index) {
   return {
     order: index,
     question: "",
-    type: "Concept",
-    importance: "4",
-    confidence: "4",
-    status: "not_started",
   };
 }
 
